@@ -3,7 +3,10 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>读书打卡 - 共享版</title>
+<meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+<meta http-equiv="Pragma" content="no-cache">
+<meta http-equiv="Expires" content="0">
+<title>读书打卡 - 共享版 v2</title>
 <style>
   :root {
     --blue: #4a6cf7;
@@ -243,7 +246,8 @@
   <div class="feed" id="feed"></div>
   <div class="empty-feed" id="emptyFeed">还没有打卡记录，点击表格格子开始吧 ~</div>
 
-  <div class="footer">📖 读书打卡 · 数据通过 GitHub 云端共享</div>
+  <div class="footer">📖 读书打卡 · 数据通过 GitHub 云端共享 · v2</div>
+  <div id="debugInfo" style="text-align:center;font-size:11px;color:#bbb;padding:8px;margin-top:4px"></div>
 </div>
 
 <script>
@@ -525,7 +529,8 @@ async function submitCheckin() {
     setTimeout(() => fetchAndRender(), 3000);
   } catch (e) {
     document.getElementById('loadingOverlay').remove();
-    alert('保存失败: ' + e.message + '\n\n请检查令牌是否正确，或稍后重试。');
+    console.error('打卡保存失败:', e);
+    alert('保存失败: ' + e.message + '\n\n请尝试：\n1. 检查令牌是否正确\n2. 刷新页面重试\n3. 如果持续失败，截图浏览器控制台(F12)的错误信息');
   }
 }
 
@@ -600,9 +605,11 @@ function showStreakPopup(name, streak) {
 async function fetchAndRender() {
   try {
     cachedRecords = await apiGetRecords();
+    document.getElementById('debugInfo').textContent = '✅ 数据已同步 · ' + cachedRecords.length + ' 条记录 · 令牌: ' + (getToken() ? '已设置' : '未设置') + ' · ' + new Date().toLocaleTimeString();
   } catch (e) {
     console.error('获取数据失败:', e);
     cachedRecords = [];
+    document.getElementById('debugInfo').textContent = '❌ 获取数据失败: ' + e.message + ' · 令牌: ' + (getToken() ? '已设置' : '未设置');
   }
   renderAll(cachedRecords);
 }
