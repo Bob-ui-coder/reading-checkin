@@ -1,0 +1,514 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>读书打卡 - 共享版</title>
+<style>
+  :root {
+    --blue: #4a6cf7;
+    --green: #10b981;
+    --gray: #f0f0f0;
+    --radius: 10px;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+    background: #f4f5f7; color: #333; padding: 20px; min-height: 100vh;
+  }
+  .container { max-width: 1200px; margin: 0 auto; }
+
+  .header {
+    text-align: center; margin-bottom: 24px;
+  }
+  .header h1 { font-size: 24px; color: #1a1a2e; margin-bottom: 6px; }
+  .header .sub { font-size: 13px; color: #999; }
+
+  .toolbar {
+    display: flex; align-items: center; justify-content: center; gap: 10px;
+    margin-bottom: 20px; flex-wrap: wrap;
+  }
+  .toolbar label { font-size: 14px; color: #555; }
+  .toolbar input[type="number"] {
+    width: 52px; padding: 5px 6px; border: 1px solid #d0d0d0; border-radius: 6px;
+    font-size: 14px; text-align: center;
+  }
+  .btn {
+    padding: 7px 18px; border: none; border-radius: 8px; font-size: 14px;
+    cursor: pointer; transition: all .2s; font-weight: 500;
+  }
+  .btn-primary { background: var(--blue); color: #fff; }
+  .btn-primary:hover { background: #3651d5; transform: translateY(-1px); }
+  .btn-outline { background: #fff; color: #555; border: 1px solid #ddd; }
+  .btn-outline:hover { background: #f5f5f5; }
+  .btn-danger { background: #fee2e2; color: #dc2626; }
+  .btn-danger:hover { background: #fecaca; }
+
+  .table-wrap {
+    background: #fff; border-radius: var(--radius); overflow: hidden;
+    box-shadow: 0 1px 8px rgba(0,0,0,0.05); overflow-x: auto;
+  }
+  table { width: 100%; border-collapse: collapse; min-width: 700px; }
+  th, td { padding: 8px 4px; text-align: center; font-size: 13px; border-bottom: 1px solid #eee; }
+  th { background: var(--blue); color: #fff; font-weight: 500; white-space: nowrap; }
+  .col-name { text-align: left; padding-left: 14px; width: 85px; white-space: nowrap; }
+  .col-name.leader { color: #dc2626; font-weight: 700; }
+  th.col-name { text-align: left; padding-left: 14px; }
+
+  .group-header td {
+    background: #eef1ff; font-weight: 700; font-size: 14px; color: var(--blue);
+    padding: 10px 14px; text-align: left; border-bottom: 2px solid var(--blue);
+  }
+
+  .cell {
+    display: inline-flex; align-items: center; justify-content: center;
+    width: 36px; height: 36px; border-radius: 8px; cursor: pointer;
+    transition: all .2s; font-size: 16px; user-select: none;
+    background: #f7f7f7; border: 1.5px dashed #d5d5d5; color: #bbb;
+  }
+  .cell:hover { background: #e8ecff; border-color: var(--blue); color: var(--blue); transform: scale(1.08); }
+  .cell.checked { background: #d1fae5; border: 1.5px solid #6ee7b7; color: var(--green); cursor: pointer; }
+  .cell.checked:hover { background: #a7f3d0; transform: scale(1.05); }
+  .cell-img { background: #dbeafe; border-color: #93c5fd; }
+
+  .modal-overlay {
+    position: fixed; inset: 0; background: rgba(0,0,0,0.35);
+    display: flex; align-items: center; justify-content: center; z-index: 1000;
+    animation: fadeIn .2s;
+  }
+  @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
+  .modal {
+    background: #fff; border-radius: 16px; width: 90%; max-width: 440px;
+    padding: 28px 24px 20px; box-shadow: 0 20px 60px rgba(0,0,0,0.15);
+    animation: slideUp .25s;
+  }
+  @keyframes slideUp { from { transform: translateY(30px); opacity: 0; } to { transform: translateY(0); opacity: 1; } }
+  .modal h3 { font-size: 17px; margin-bottom: 4px; color: #1a1a2e; }
+  .modal .hint { font-size: 13px; color: #999; margin-bottom: 16px; }
+  .modal textarea {
+    width: 100%; height: 100px; border: 1px solid #ddd; border-radius: 10px;
+    padding: 12px; font-size: 14px; font-family: inherit; resize: vertical;
+    outline: none; transition: border .2s;
+  }
+  .modal textarea:focus { border-color: var(--blue); }
+  .modal .file-row {
+    display: flex; align-items: center; gap: 10px; margin-top: 12px;
+  }
+  .modal .file-row .upload-btn {
+    padding: 8px 16px; border: 1.5px dashed #ccc; border-radius: 8px;
+    background: #fafafa; cursor: pointer; font-size: 13px; color: #666;
+    transition: all .2s;
+  }
+  .modal .file-row .upload-btn:hover { border-color: var(--blue); color: var(--blue); }
+  .modal .preview-thumb {
+    max-width: 120px; max-height: 80px; border-radius: 8px; object-fit: cover;
+    display: none;
+  }
+  .modal .modal-actions {
+    display: flex; gap: 10px; margin-top: 20px; justify-content: flex-end;
+  }
+  .modal .btn-submit { background: var(--green); color: #fff; }
+  .modal .btn-submit:hover { background: #059669; }
+  .modal .btn-cancel { background: #f3f3f3; color: #666; }
+
+  .section-title {
+    font-size: 16px; font-weight: 600; color: #1a1a2e; margin: 28px 0 14px;
+    display: flex; align-items: center; gap: 6px;
+  }
+  .feed {
+    display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+    gap: 14px;
+  }
+  .card {
+    background: #fff; border-radius: var(--radius); padding: 16px;
+    box-shadow: 0 1px 6px rgba(0,0,0,0.04); display: flex; gap: 12px;
+    transition: transform .15s;
+  }
+  .card:hover { transform: translateY(-2px); }
+  .card .avatar {
+    width: 42px; height: 42px; border-radius: 50%; background: var(--blue);
+    color: #fff; display: flex; align-items: center; justify-content: center;
+    font-size: 16px; font-weight: 600; flex-shrink: 0;
+  }
+  .card .body { flex: 1; min-width: 0; }
+  .card .meta { font-size: 12px; color: #999; margin-bottom: 4px; }
+  .card .meta strong { color: #333; }
+  .card .text { font-size: 14px; color: #444; line-height: 1.6; white-space: pre-wrap; word-break: break-word; }
+  .card .img-row { margin-top: 8px; }
+  .card .img-row img {
+    max-width: 100%; max-height: 200px; border-radius: 8px; cursor: pointer;
+    border: 1px solid #eee;
+  }
+  .card .delete-btn {
+    font-size: 12px; color: #ccc; cursor: pointer; background: none; border: none;
+    padding: 2px 6px; margin-top: 6px;
+  }
+  .card .delete-btn:hover { color: #dc2626; }
+
+  .lightbox {
+    position: fixed; inset: 0; background: rgba(0,0,0,0.85); z-index: 2000;
+    display: flex; align-items: center; justify-content: center; cursor: pointer;
+  }
+  .lightbox img { max-width: 90vw; max-height: 85vh; border-radius: 8px; }
+
+  .summary { text-align: right; font-size: 13px; color: #888; margin-top: 14px; }
+  .footer { margin-top: 40px; text-align: center; font-size: 12px; color: #bbb; padding-bottom: 30px; }
+  .empty-feed { text-align: center; color: #ccc; padding: 40px; font-size: 14px; }
+
+  .streak-overlay {
+    position: fixed; inset: 0; background: rgba(0,0,0,0.45);
+    display: flex; align-items: center; justify-content: center; z-index: 3000;
+    animation: fadeIn .2s;
+  }
+  .streak-card {
+    background: #fff; border-radius: 20px; padding: 36px 32px 28px;
+    text-align: center; box-shadow: 0 24px 80px rgba(0,0,0,0.2);
+    animation: popIn .4s cubic-bezier(.34,1.56,.64,1);
+    max-width: 360px; width: 90%;
+  }
+  @keyframes popIn {
+    from { transform: scale(0.7); opacity: 0; }
+    to { transform: scale(1); opacity: 1; }
+  }
+  .streak-emoji { font-size: 72px; margin-bottom: 8px; animation: bounce 1s infinite; }
+  @keyframes bounce {
+    0%,100% { transform: translateY(0); }
+    50% { transform: translateY(-12px); }
+  }
+  .streak-days { font-size: 48px; font-weight: 800; color: var(--blue); line-height: 1; }
+  .streak-msg { font-size: 18px; color: #333; margin: 10px 0 6px; font-weight: 600; }
+  .streak-sub { font-size: 13px; color: #999; margin-bottom: 20px; }
+  .streak-milestones {
+    display: flex; justify-content: center; gap: 8px; margin: 14px 0 20px; flex-wrap: wrap;
+  }
+  .streak-milestone {
+    padding: 4px 12px; border-radius: 20px; font-size: 12px;
+    background: #f0f0f0; color: #888;
+  }
+  .streak-milestone.hit { background: #d1fae5; color: #059669; font-weight: 600; }
+
+  .sync-badge {
+    display: inline-flex; align-items: center; gap: 6px;
+    padding: 4px 12px; border-radius: 20px; font-size: 12px;
+    background: #d1fae5; color: #059669; margin-left: 10px;
+  }
+  .sync-badge .dot { width: 6px; height: 6px; border-radius: 50%; background: #10b981; animation: pulse 2s infinite; }
+  @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.3} }
+</style>
+</head>
+<body>
+<div class="container">
+  <div class="header">
+    <h1>📖 读书打卡 <span class="sync-badge"><span class="dot"></span> 实时共享</span></h1>
+    <div class="sub">所有人的打卡记录实时同步 · 点击格子打卡</div>
+  </div>
+
+  <div class="toolbar">
+    <label>天数：</label>
+    <input type="number" id="dayCount" value="7" min="1" max="31">
+    <button class="btn btn-primary" onclick="fetchAndRender()">刷新</button>
+    <button class="btn btn-danger" onclick="resetAll()">清空全部</button>
+    <button class="btn btn-outline" onclick="exportData()">导出数据</button>
+  </div>
+
+  <div class="table-wrap"><table id="checkTable"></table></div>
+  <div class="summary" id="summary"></div>
+
+  <div class="section-title">📝 打卡动态（实时共享）</div>
+  <div class="feed" id="feed"></div>
+  <div class="empty-feed" id="emptyFeed">还没有打卡记录，点击表格格子开始吧 ~</div>
+
+  <div class="footer">🔗 把链接发给所有小伙伴，大家看到的是同一份数据</div>
+</div>
+
+<script>
+const groups = [
+  { name: "第1组", members: ["Bob", "Jobs", "Evenc", "Jett", "Lovis"] },
+  { name: "第2组", members: ["john", "Brendan", "Sookie", "Monty", "Ryan"] },
+  { name: "第3组", members: ["Max", "jackie", "黎瑞", "ocean"] },
+  { name: "第4组", members: ["Ezekiel", "Nora", "leon", "Jasper"] },
+  { name: "第5组", members: ["Lina", "Tyler", "Ethan", "Richard", "Nox"] }
+];
+
+const LEADERS = new Set(["Evenc", "Brendan", "Max", "Ezekiel", "Ethan"]);
+
+// ---- API helpers ----
+async function apiGetRecords() {
+  const res = await fetch('/api/records');
+  if (!res.ok) throw new Error('获取数据失败');
+  return res.json();
+}
+
+async function apiCheckin(name, day, text, image) {
+  const res = await fetch('/api/checkin', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name, day, text, image })
+  });
+  if (!res.ok) {
+    const err = await res.json();
+    throw new Error(err.error || '打卡失败');
+  }
+  return res.json();
+}
+
+async function apiDelete(name, day) {
+  await fetch(`/api/records/${encodeURIComponent(name)}/${day}`, { method: 'DELETE' });
+}
+
+async function apiReset() {
+  await fetch('/api/reset', { method: 'POST' });
+}
+
+// ---- Modal ----
+let modalTarget = null;
+function openModal(name, day) {
+  modalTarget = { name, day };
+  document.body.insertAdjacentHTML('beforeend', `
+    <div class="modal-overlay" id="modalOverlay">
+      <div class="modal">
+        <h3>${name} · Day ${day}</h3>
+        <div class="hint">记录你的读书心得</div>
+        <textarea id="modalText" placeholder="今天读了什么书？有什么收获？"></textarea>
+        <div class="file-row">
+          <label class="upload-btn">
+            📷 添加图片
+            <input type="file" id="modalFile" accept="image/*" style="display:none" onchange="previewFile(this)">
+          </label>
+          <img class="preview-thumb" id="previewThumb">
+        </div>
+        <div class="modal-actions">
+          <button class="btn btn-cancel" onclick="closeModal()">取消</button>
+          <button class="btn btn-submit" onclick="submitCheckin()">✅ 打卡</button>
+        </div>
+      </div>
+    </div>
+  `);
+  document.getElementById('modalOverlay').addEventListener('click', e => {
+    if (e.target.id === 'modalOverlay') closeModal();
+  });
+}
+
+function closeModal() {
+  const el = document.getElementById('modalOverlay');
+  if (el) el.remove();
+  modalTarget = null;
+}
+
+let pendingImage = null;
+function previewFile(input) {
+  const file = input.files[0];
+  if (!file) return;
+  if (file.size > 5 * 1024 * 1024) { alert('图片大小不能超过 5MB'); return; }
+  const reader = new FileReader();
+  reader.onload = () => {
+    pendingImage = reader.result;
+    document.getElementById('previewThumb').src = reader.result;
+    document.getElementById('previewThumb').style.display = 'block';
+  };
+  reader.readAsDataURL(file);
+}
+
+async function submitCheckin() {
+  if (!modalTarget) return;
+  const text = document.getElementById('modalText').value.trim();
+  if (!text && !pendingImage) { alert('至少填写一段心得或上传一张图片'); return; }
+
+  const targetName = modalTarget.name;
+  const targetDay = modalTarget.day;
+
+  try {
+    await apiCheckin(targetName, targetDay, text, pendingImage || null);
+  } catch (e) {
+    alert('提交失败：' + e.message);
+    return;
+  }
+
+  closeModal();
+  pendingImage = null;
+  await fetchAndRender();
+
+  const streak = calcStreak(targetName);
+  showStreakPopup(targetName, streak);
+}
+
+// ---- Streak ----
+let cachedRecords = [];
+
+function calcStreak(name) {
+  const days = cachedRecords
+    .filter(r => r.name === name)
+    .map(r => r.day)
+    .sort((a, b) => b - a);
+
+  if (days.length === 0) return 0;
+
+  let streak = 1;
+  for (let i = 0; i < days.length - 1; i++) {
+    if (days[i] - days[i + 1] === 1) streak++;
+    else break;
+  }
+  return streak;
+}
+
+const STREAK_EMOJIS = [
+  { min: 30, emoji: '🌟', msg: '传奇读书人！', subtitle: '你已经把读书变成了习惯' },
+  { min: 21, emoji: '🚀', msg: '超强自律！', subtitle: '21天养成一个好习惯，你做到了' },
+  { min: 14, emoji: '👑', msg: '王中之王！', subtitle: '两周不间断，你是所有人的榜样' },
+  { min: 10, emoji: '🎯', msg: '十全十美！', subtitle: '两位数连击，读书已入魂' },
+  { min: 7,  emoji: '🏆', msg: '一周全勤！', subtitle: '整整一周都在读书，太强了' },
+  { min: 5,  emoji: '💪', msg: '渐入佳境！', subtitle: '五天连读，越来越有感觉了' },
+  { min: 3,  emoji: '🔥', msg: '开始上瘾！', subtitle: '第三天了，读书的快乐你懂的' },
+  { min: 2,  emoji: '✨', msg: '再接再厉！', subtitle: '第二天，保持住这个节奏' },
+  { min: 1,  emoji: '🌱', msg: '迈出第一步！', subtitle: '种下一颗读书的种子' },
+];
+
+const MILESTONES = [3, 7, 14, 21, 30, 50, 100];
+
+function getStreakInfo(streak) {
+  for (const item of STREAK_EMOJIS) {
+    if (streak >= item.min) return item;
+  }
+  return STREAK_EMOJIS[STREAK_EMOJIS.length - 1];
+}
+
+function showStreakPopup(name, streak) {
+  const info = getStreakInfo(streak);
+  const milestonesHtml = MILESTONES.map(m => {
+    const hit = streak >= m;
+    return `<span class="streak-milestone${hit ? ' hit' : ''}">${hit ? '✅' : '🔒'} ${m}天</span>`;
+  }).join('');
+
+  const overlay = document.createElement('div');
+  overlay.className = 'streak-overlay';
+  overlay.id = 'streakOverlay';
+  overlay.innerHTML = `
+    <div class="streak-card">
+      <div class="streak-emoji">${info.emoji}</div>
+      <div class="streak-days">${streak}</div>
+      <div style="font-size:13px;color:#999;">天</div>
+      <div class="streak-msg">${info.msg}</div>
+      <div class="streak-sub">${name}，${info.subtitle}</div>
+      <div class="streak-milestones">${milestonesHtml}</div>
+      <button class="btn btn-primary" style="margin-top:8px;font-size:15px;padding:10px 36px;" onclick="document.getElementById('streakOverlay').remove()">🎉 好的！继续加油</button>
+    </div>
+  `;
+  document.body.appendChild(overlay);
+  overlay.addEventListener('click', e => {
+    if (e.target === overlay) overlay.remove();
+  });
+}
+
+// ---- Table rendering ----
+async function fetchAndRender() {
+  try {
+    cachedRecords = await apiGetRecords();
+  } catch (e) {
+    console.error('获取数据失败:', e);
+    cachedRecords = [];
+  }
+  renderAll(cachedRecords);
+}
+
+function renderAll(allRecords) {
+  const days = parseInt(document.getElementById('dayCount').value) || 7;
+  const recordMap = {};
+  allRecords.forEach(r => { recordMap[r.key] = r; });
+
+  const table = document.getElementById('checkTable');
+  let html = '<thead><tr><th class="col-name">姓名</th>';
+  for (let d = 1; d <= days; d++) html += `<th>Day ${d}</th>`;
+  html += '</tr></thead><tbody>';
+
+  groups.forEach(group => {
+    html += `<tr class="group-header"><td colspan="${days + 1}">${group.name}</td></tr>`;
+    group.members.forEach(name => {
+      html += '<tr>';
+      html += `<td class="col-name${LEADERS.has(name) ? ' leader' : ''}">${name}</td>`;
+      for (let d = 1; d <= days; d++) {
+        const key = `${name}_${d}`;
+        const rec = recordMap[key];
+        const cls = rec ? (rec.image ? 'cell cell-img checked' : 'cell checked') : 'cell';
+        const icon = rec ? '✓' : '+';
+        html += `<td><span class="${cls}" data-name="${escapeHtml(name)}" data-day="${d}">${icon}</span></td>`;
+      }
+      html += '</tr>';
+    });
+  });
+
+  html += '</tbody>';
+  table.innerHTML = html;
+
+  table.querySelectorAll('.cell').forEach(cell => {
+    cell.addEventListener('click', () => {
+      openModal(cell.dataset.name, parseInt(cell.dataset.day));
+    });
+  });
+
+  document.getElementById('summary').textContent = `共 ${allRecords.length} 人次已打卡`;
+  renderFeed(allRecords);
+}
+
+function renderFeed(records) {
+  records.sort((a, b) => b.time - a.time);
+  const feedEl = document.getElementById('feed');
+  const emptyEl = document.getElementById('emptyFeed');
+  if (records.length === 0) {
+    feedEl.innerHTML = '';
+    emptyEl.style.display = 'block';
+    return;
+  }
+  emptyEl.style.display = 'none';
+
+  feedEl.innerHTML = records.map(r => {
+    const initial = r.name.charAt(0).toUpperCase();
+    const dateStr = new Date(r.time).toLocaleString('zh-CN', {
+      month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit'
+    });
+    return `
+      <div class="card">
+        <div class="avatar">${initial}</div>
+        <div class="body">
+          <div class="meta"><strong>${r.name}</strong> · Day ${r.day} · ${dateStr}</div>
+          ${r.text ? `<div class="text">${escapeHtml(r.text)}</div>` : ''}
+          ${r.image ? `<div class="img-row"><img src="${r.image}" onclick="openLightbox(this.src)" loading="lazy"></div>` : ''}
+          <button class="delete-btn" onclick="delRecord('${r.name}',${r.day})">删除此条</button>
+        </div>
+      </div>`;
+  }).join('');
+}
+
+async function delRecord(name, day) {
+  if (!confirm('删除这条打卡记录？')) return;
+  await apiDelete(name, day);
+  await fetchAndRender();
+}
+
+function openLightbox(src) {
+  const lb = document.createElement('div');
+  lb.className = 'lightbox';
+  lb.innerHTML = `<img src="${src}">`;
+  lb.addEventListener('click', () => lb.remove());
+  document.body.appendChild(lb);
+}
+
+async function resetAll() {
+  if (!confirm('确定清空全部打卡记录？（此操作不可恢复，所有人的数据都会丢失）')) return;
+  await apiReset();
+  await fetchAndRender();
+}
+
+function exportData() {
+  window.open('/api/export', '_blank');
+}
+
+function escapeHtml(s) {
+  return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+// ---- Auto refresh ----
+fetchAndRender();
+setInterval(fetchAndRender, 5000);
+</script>
+</body>
+</html>
