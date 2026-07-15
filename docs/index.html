@@ -266,6 +266,16 @@ const groups = [
 
 const LEADERS = new Set(["Evenc", "Brendan", "Max", "Ezekiel", "Ethan"]);
 
+// ===== 管理员 =====
+const ADMIN_CODE = 'bob_admin_2026'; // 管理员暗号
+function isAdmin() {
+  return localStorage.getItem('reading_checkin_admin') === ADMIN_CODE;
+}
+// 当前用户名（用于权限判断）
+function getCurrentUser() {
+  return localStorage.getItem('reading_checkin_user') || '';
+}
+
 // ===== Token 管理 =====
 function getToken() {
   return localStorage.getItem('reading_checkin_token') || '';
@@ -277,22 +287,42 @@ function setToken(token) {
 
 function updateTokenBanner() {
   const banner = document.getElementById('tokenBanner');
-  if (getToken()) {
+  if (getToken() && getCurrentUser()) {
     banner.classList.add('hidden');
   } else {
     banner.classList.remove('hidden');
+    const msg = !getToken() ? '还未设置打卡令牌' : '还未设置你的名字';
+    banner.querySelector('span').textContent = '⚠️ ' + msg + '，请先完成设置才能打卡';
   }
 }
 
 // ===== 设置弹窗 =====
 function openSettings() {
   const currentToken = getToken();
+  const currentUser = getCurrentUser();
+  const adminChecked = isAdmin() ? 'checked' : '';
   document.body.insertAdjacentHTML('beforeend', `
     <div class="modal-overlay" id="settingsOverlay">
       <div class="modal settings-modal">
-        <h3>⚙️ 设置打卡令牌</h3>
-        <div class="hint">用于保存打卡数据到云端共享</div>
-        <input type="password" id="tokenInput" value="${currentToken}" placeholder="粘贴 GitHub Token（以 ghp_ 或 github_pat_ 开头）">
+        <h3>⚙️ 设置</h3>
+        <div class="hint">配置打卡令牌和身份信息</div>
+        
+        <label style="font-size:13px;color:#555;display:block;margin-bottom:4px">我的名字</label>
+        <input type="text" id="userInput" value="${currentUser}" placeholder="输入你的名字（如 Bob）" style="width:100%;padding:10px 12px;border:1px solid #ddd;border-radius:8px;font-size:14px;margin-bottom:12px;outline:none">
+        
+        <label style="font-size:13px;color:#555;display:block;margin-bottom:4px">打卡令牌</label>
+        <input type="password" id="tokenInput" value="${currentToken}" placeholder="粘贴 GitHub Token（以 ghp_ 开头）">
+        
+        <div style="margin-top:12px;padding:10px 12px;background:#f8f9fa;border-radius:8px;font-size:13px">
+          <label style="display:flex;align-items:center;gap:8px;cursor:pointer">
+            <input type="checkbox" id="adminToggle" ${adminChecked} style="width:16px;height:16px">
+            <span>🔑 管理员模式</span>
+          </label>
+          <div id="adminCodeWrap" style="${isAdmin() ? '' : 'display:none'};margin-top:8px">
+            <input type="password" id="adminCode" placeholder="输入管理员暗号" style="width:100%;padding:8px 10px;border:1px solid #ddd;border-radius:6px;font-size:13px">
+          </div>
+        </div>
+
         <div class="help">
           <strong>如何获取令牌？</strong><br>
           1. 打开 <a href="https://github.com/settings/tokens/new?scopes=gist&description=reading-checkin" target="_blank">GitHub Token 创建页</a><br>
@@ -308,6 +338,9 @@ function openSettings() {
       </div>
     </div>
   `);
+  document.getElementById('adminToggle').addEventListener('change', e => {
+    document.getElementById('adminCodeWrap').style.display = e.target.checked ? '' : 'none';
+  });
   document.getElementById('settingsOverlay').addEventListener('click', e => {
     if (e.target.id === 'settingsOverlay') closeSettings();
   });
@@ -320,8 +353,26 @@ function closeSettings() {
 
 function saveSettings() {
   const token = document.getElementById('tokenInput').value.trim();
+  const user = document.getElementById('userInput').value.trim();
   if (!token) { alert('请输入令牌'); return; }
+  if (!user) { alert('请输入你的名字'); return; }
   setToken(token);
+  localStorage.setItem('reading_checkin_user', user);
+  
+  // 管理员设置
+  const adminToggle = document.getElementById('adminToggle').checked;
+  if (adminToggle) {
+    const code = document.getElementById('adminCode').value.trim();
+    if (code === ADMIN_CODE) {
+      localStorage.setItem('reading_checkin_admin', ADMIN_CODE);
+    } else {
+      alert('管理员暗号错误');
+      return;
+    }
+  } else {
+    localStorage.removeItem('reading_checkin_admin');
+  }
+  
   closeSettings();
   updateTokenBanner();
   fetchAndRender();
@@ -335,16 +386,34 @@ async function apiGetRecords() {
   return data.records || [];
 }
 
-async function apiSaveRecords(records) {
+async function apiSaveRecords(records, mode) {
   const token = getToken();
   if (!token) throw new Error('未设置令牌，请先点击"设置"配置令牌');
 
-  const content = JSON.stringify({ records }, null, 2);
+  // mode === 'replace' 时直接覆盖（用于删除/重置）
+  // mode === 'merge' 或未指定时合并（用于打卡，防止覆盖别人的数据）
+  if (mode === 'replace') {
+    const content = JSON.stringify({ records }, null, 2);
+    const patchRes = await fetch(GIST_API_URL, {
+      method: 'PATCH',
+      headers: {
+        'Authorization': 'Bearer ' + token,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        files: { 'data.json': { content } }
+      })
+    });
+    if (!patchRes.ok) {
+      const err = await patchRes.json().catch(() => ({}));
+      throw new Error(err.message || '保存失败');
+    }
+    return records;
+  }
 
-  // 最多重试3次（处理并发冲突）
+  // 合并模式
   for (let attempt = 0; attempt < 3; attempt++) {
     try {
-      // 获取当前 Gist 的最新版本
       const getRes = await fetch(GIST_API_URL, {
         headers: { 'Authorization': 'Bearer ' + token }
       });
@@ -354,14 +423,12 @@ async function apiSaveRecords(records) {
       }
       const gist = await getRes.json();
 
-      // 合并数据（防止覆盖其他人的打卡）
       let existingRecords = [];
       try {
         const existingContent = gist.files['data.json']?.content || '{"records":[]}';
         existingRecords = JSON.parse(existingContent).records || [];
       } catch (e) { /* ignore */ }
 
-      // 合并：以新 records 为准，但保留 existingRecords 中不在新 records 里的记录
       const newKeys = new Set(records.map(r => r.key));
       const merged = [...records];
       for (const r of existingRecords) {
@@ -369,8 +436,6 @@ async function apiSaveRecords(records) {
       }
 
       const mergedContent = JSON.stringify({ records: merged }, null, 2);
-
-      // 更新 Gist
       const patchRes = await fetch(GIST_API_URL, {
         method: 'PATCH',
         headers: {
@@ -378,15 +443,12 @@ async function apiSaveRecords(records) {
           'Content-Type': 'application/json'
         },
         body: JSON.stringify({
-          files: {
-            'data.json': { content: mergedContent }
-          }
+          files: { 'data.json': { content: mergedContent } }
         })
       });
 
       if (patchRes.ok) return merged;
       if (patchRes.status === 409 && attempt < 2) {
-        // 并发冲突，等待后重试
         await new Promise(r => setTimeout(r, 500 * (attempt + 1)));
         continue;
       }
@@ -416,11 +478,11 @@ async function apiDelete(name, day) {
   const records = await apiGetRecords();
   const key = name + '_' + day;
   const filtered = records.filter(r => r.key !== key);
-  await apiSaveRecords(filtered);
+  await apiSaveRecords(filtered, 'replace'); // 用 replace 模式，否则合并逻辑会把删的加回来
 }
 
 async function apiReset() {
-  await apiSaveRecords([]);
+  await apiSaveRecords([], 'replace');
 }
 
 // ===== 图片压缩 =====
@@ -444,23 +506,60 @@ function compressImage(dataUrl, maxWidth, quality) {
 // ===== Modal =====
 let modalTarget = null;
 function openModal(name, day) {
+  // 权限检查：非管理员只能操作自己的格子
+  const admin = isAdmin();
+  const currentUser = getCurrentUser();
+  if (!admin && currentUser !== name) {
+    // 查看模式 - 只能看，不能改
+    const rec = cachedRecords.find(r => r.key === name + '_' + day);
+    if (rec) {
+      // 有记录，显示内容（只读）
+      const dateStr = new Date(rec.time).toLocaleString('zh-CN', {
+        month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit'
+      });
+      document.body.insertAdjacentHTML('beforeend', `
+        <div class="modal-overlay" id="modalOverlay">
+          <div class="modal">
+            <h3>${name} · Day ${day}</h3>
+            <div class="hint">${dateStr} · 🔒 只读（非本人）</div>
+            ${rec.text ? `<div style="padding:12px;background:#f8f9fa;border-radius:8px;font-size:14px;line-height:1.6;white-space:pre-wrap">${escapeHtml(rec.text)}</div>` : '<div style="color:#ccc;text-align:center;padding:20px">无文字内容</div>'}
+            ${rec.image ? `<div style="margin-top:12px"><img src="${rec.image}" style="max-width:100%;border-radius:8px;border:1px solid #eee" onclick="openLightbox(this.src)"></div>` : ''}
+            <div class="modal-actions">
+              <button class="btn btn-cancel" onclick="closeModal()">关闭</button>
+            </div>
+          </div>
+        </div>
+      `);
+      document.getElementById('modalOverlay').addEventListener('click', e => {
+        if (e.target.id === 'modalOverlay') closeModal();
+      });
+    } else {
+      // 没有记录，提示不能打卡
+      alert('这是 ' + name + ' 的格子，你只能在自己的格子上打卡哦~\n\n你的名字是：' + (currentUser || '未设置') + '\n如需修改，请到「设置」中更改你的名字。');
+    }
+    return;
+  }
+
   modalTarget = { name, day };
+  const existing = cachedRecords.find(r => r.key === name + '_' + day);
+  const isEditing = !!existing;
   document.body.insertAdjacentHTML('beforeend', `
     <div class="modal-overlay" id="modalOverlay">
       <div class="modal">
         <h3>${name} · Day ${day}</h3>
-        <div class="hint">记录你的读书心得</div>
-        <textarea id="modalText" placeholder="今天读了什么书？有什么收获？"></textarea>
+        <div class="hint">${isEditing ? '编辑打卡内容' : '记录你的读书心得'}${admin && currentUser !== name ? ' · 🔑 管理员操作' : ''}</div>
+        <textarea id="modalText" placeholder="今天读了什么书？有什么收获？">${existing ? escapeHtml(existing.text || '') : ''}</textarea>
         <div class="file-row">
           <label class="upload-btn">
-            📷 添加图片
+            📷 ${existing && existing.image ? '更换图片' : '添加图片'}
             <input type="file" id="modalFile" accept="image/*" style="display:none" onchange="previewFile(this)">
           </label>
-          <img class="preview-thumb" id="previewThumb">
+          ${existing && existing.image ? `<img class="preview-thumb" id="previewThumb" src="${existing.image}" style="display:block">` : '<img class="preview-thumb" id="previewThumb">'}
         </div>
         <div class="modal-actions">
+          ${isEditing ? '<button class="btn btn-danger" style="margin-right:auto" onclick="deleteFromModal()">🗑️ 删除</button>' : ''}
           <button class="btn btn-cancel" onclick="closeModal()">取消</button>
-          <button class="btn btn-submit" onclick="submitCheckin()">✅ 打卡</button>
+          <button class="btn btn-submit" onclick="submitCheckin()">${isEditing ? '✅ 更新' : '✅ 打卡'}</button>
         </div>
       </div>
     </div>
@@ -468,6 +567,32 @@ function openModal(name, day) {
   document.getElementById('modalOverlay').addEventListener('click', e => {
     if (e.target.id === 'modalOverlay') closeModal();
   });
+}
+
+async function deleteFromModal() {
+  if (!modalTarget) return;
+  const name = modalTarget.name;
+  const day = modalTarget.day;
+  if (!confirm(`确认删除 ${name} Day ${day} 的打卡记录？`)) return;
+  closeModal();
+  pendingImage = null;
+  
+  const loadingEl = document.createElement('div');
+  loadingEl.className = 'streak-overlay';
+  loadingEl.id = 'loadingOverlay';
+  loadingEl.innerHTML = '<div class="streak-card"><div class="streak-emoji" style="animation:none">⏳</div><div class="streak-msg">正在删除...</div></div>';
+  document.body.appendChild(loadingEl);
+  
+  try {
+    await apiDelete(name, day);
+    cachedRecords = cachedRecords.filter(r => r.key !== name + '_' + day);
+    renderAll(cachedRecords);
+    document.getElementById('loadingOverlay').remove();
+    setTimeout(() => fetchAndRender(), 3000);
+  } catch (e) {
+    document.getElementById('loadingOverlay').remove();
+    alert('删除失败: ' + e.message);
+  }
 }
 
 function closeModal() {
@@ -605,11 +730,11 @@ function showStreakPopup(name, streak) {
 async function fetchAndRender() {
   try {
     cachedRecords = await apiGetRecords();
-    document.getElementById('debugInfo').textContent = '✅ 数据已同步 · ' + cachedRecords.length + ' 条记录 · 令牌: ' + (getToken() ? '已设置' : '未设置') + ' · ' + new Date().toLocaleTimeString();
+    document.getElementById('debugInfo').textContent = '✅ 数据已同步 · ' + cachedRecords.length + ' 条记录 · 用户: ' + (getCurrentUser() || '未设置') + (isAdmin() ? ' · 🔑 管理员' : '') + ' · 令牌: ' + (getToken() ? '已设置' : '未设置') + ' · ' + new Date().toLocaleTimeString();
   } catch (e) {
     console.error('获取数据失败:', e);
     cachedRecords = [];
-    document.getElementById('debugInfo').textContent = '❌ 获取数据失败: ' + e.message + ' · 令牌: ' + (getToken() ? '已设置' : '未设置');
+    document.getElementById('debugInfo').textContent = '❌ 获取数据失败: ' + e.message + ' · 用户: ' + (getCurrentUser() || '未设置') + ' · 令牌: ' + (getToken() ? '已设置' : '未设置');
   }
   renderAll(cachedRecords);
 }
@@ -669,25 +794,36 @@ function renderFeed(records) {
     const dateStr = new Date(r.time).toLocaleString('zh-CN', {
       month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit'
     });
+    const canDelete = isAdmin() || getCurrentUser() === r.name;
+    const deleteBtn = canDelete
+      ? `<button class="delete-btn" onclick="delRecord('${escapeHtml(r.name)}',${r.day})">删除此条</button>`
+      : '';
     return `
       <div class="card">
         <div class="avatar">${initial}</div>
         <div class="body">
-          <div class="meta"><strong>${r.name}</strong> · Day ${r.day} · ${dateStr}</div>
+          <div class="meta"><strong>${escapeHtml(r.name)}</strong> · Day ${r.day} · ${dateStr}</div>
           ${r.text ? `<div class="text">${escapeHtml(r.text)}</div>` : ''}
           ${r.image ? `<div class="img-row"><img src="${r.image}" onclick="openLightbox(this.src)" loading="lazy"></div>` : ''}
-          <button class="delete-btn" onclick="delRecord('${r.name}',${r.day})">删除此条</button>
+          ${deleteBtn}
         </div>
       </div>`;
   }).join('');
 }
 
 async function delRecord(name, day) {
-  if (!confirm('删除这条打卡记录？')) return;
+  // 权限检查
+  if (!isAdmin() && getCurrentUser() !== name) {
+    alert('你只能删除自己的打卡记录');
+    return;
+  }
+  if (!confirm(`确认删除 ${name} Day ${day} 的打卡记录？`)) return;
   if (!getToken()) { alert('请先设置令牌'); return; }
   try {
     await apiDelete(name, day);
-    await fetchAndRender();
+    cachedRecords = cachedRecords.filter(r => r.key !== name + '_' + day);
+    renderAll(cachedRecords);
+    setTimeout(() => fetchAndRender(), 3000);
   } catch (e) {
     alert('删除失败: ' + e.message);
   }
