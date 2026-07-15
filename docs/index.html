@@ -499,10 +499,10 @@ async function submitCheckin() {
 
   const targetName = modalTarget.name;
   const targetDay = modalTarget.day;
+  const imageData = pendingImage; // 保存图片引用，避免被 closeModal 后清空
 
   closeModal();
   pendingImage = null;
-  await fetchAndRender();
 
   // 显示加载提示
   const loadingEl = document.createElement('div');
@@ -512,11 +512,17 @@ async function submitCheckin() {
   document.body.appendChild(loadingEl);
 
   try {
-    await apiCheckin(targetName, targetDay, text, pendingImage || null);
+    const savedRecord = await apiCheckin(targetName, targetDay, text, imageData || null);
+    // 本地立即更新数据（不等 CDN 刷新）
+    const idx = cachedRecords.findIndex(r => r.key === savedRecord.key);
+    if (idx >= 0) cachedRecords[idx] = savedRecord;
+    else cachedRecords.push(savedRecord);
+    renderAll(cachedRecords);
     document.getElementById('loadingOverlay').remove();
-    await fetchAndRender();
     const streak = calcStreak(targetName);
     showStreakPopup(targetName, streak);
+    // 延迟刷新一次，确保最终和服务器同步
+    setTimeout(() => fetchAndRender(), 3000);
   } catch (e) {
     document.getElementById('loadingOverlay').remove();
     alert('保存失败: ' + e.message + '\n\n请检查令牌是否正确，或稍后重试。');
