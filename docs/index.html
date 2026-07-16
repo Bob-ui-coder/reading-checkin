@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<!-- v3.2 - 2026-07-16 16:00 连续天数+完成率排行 -->
+<!-- v3.3 - 2026-07-16 16:10 AI反馈支持图片 -->
 <html lang="zh-CN">
 <head>
 <meta charset="UTF-8">
@@ -780,16 +780,37 @@ function getAIConfig() {
   };
 }
 
-async function generateAIFeedback(name, text) {
+async function generateAIFeedback(name, text, image) {
   const config = getAIConfig();
-  if (!config.key || !text) return null;
+  if (!config.key) return null;
+  if (!text && !image) return null;
 
-  const systemPrompt = `你是一位温暖、有趣、懂得鼓励人的读书导师。用户分享了他们的读书心得，请你：
+  const systemPrompt = `你是一位温暖、有趣、懂得鼓励人的读书导师。用户分享了他们的读书内容（可能是文字心得，也可能是读书笔记的拍照），请你：
 1. 用 2-3 句话给出发自内心的鼓励和反馈
-2. 如果心得中提到具体书籍内容，可以延伸一个相关的小知识或思考角度
-3. 风格要像朋友聊天一样自然，不要像 AI 在写作文
-4. 字数控制在 60-120 字之间
-5. 不要用"你的心得很好"这类套话开头`;
+2. 如果是文字心得，对内容进行回应；如果是图片（读书笔记/书页拍照），识别图片中的文字和内容并给出反馈
+3. 如果提到具体书籍或能识别出书名/内容，可以延伸一个相关的小知识或思考角度
+4. 风格要像朋友聊天一样自然，不要像 AI 在写作文
+5. 字数控制在 60-120 字之间
+6. 不要用"你的心得很好"这类套话开头`;
+
+  // 构建用户消息内容（支持多模态）
+  let userContent;
+  if (image && text) {
+    // 文字 + 图片
+    userContent = [
+      { type: 'text', text: `${name} 今天的读书打卡：\n\n${text}` },
+      { type: 'image_url', image_url: { url: image } }
+    ];
+  } else if (image) {
+    // 只有图片
+    userContent = [
+      { type: 'text', text: `${name} 上传了今天的读书打卡（拍照），请根据图片内容给出反馈` },
+      { type: 'image_url', image_url: { url: image } }
+    ];
+  } else {
+    // 只有文字
+    userContent = `${name} 今天的读书心得：\n\n${text}`;
+  }
 
   try {
     const res = await fetch(config.baseUrl + '/chat/completions', {
@@ -802,7 +823,7 @@ async function generateAIFeedback(name, text) {
         model: config.model,
         messages: [
           { role: 'system', content: systemPrompt },
-          { role: 'user', content: `${name} 今天的读书心得：\n\n${text}` }
+          { role: 'user', content: userContent }
         ],
         max_tokens: 300,
         temperature: 0.8
@@ -825,14 +846,14 @@ async function generateAIFeedback(name, text) {
 async function requestAIFeedback(name, day) {
   if (!getToken()) { alert('请先设置打卡令牌（GitHub Token）才能保存 AI 反馈'); openSettings(); return; }
   const rec = cachedRecords.find(r => r.key === name + '_' + day);
-  if (!rec || !rec.text) return;
+  if (!rec || (!rec.text && !rec.image)) return;
 
   // 显示加载状态
   const card = document.querySelector(`[data-feedback-key="${name}_${day}"]`);
   const btn = card?.querySelector('.btn-ai');
   if (btn) { btn.disabled = true; btn.textContent = '⏳ AI 思考中...'; }
 
-  const feedback = await generateAIFeedback(name, rec.text);
+  const feedback = await generateAIFeedback(name, rec.text, rec.image || null);
   
   if (feedback) {
     // 重新获取最新数据（生成反馈期间可能有其他人打卡），再更新这一条
@@ -861,7 +882,7 @@ async function batchAIFeedback() {
     return;
   }
 
-  const pending = cachedRecords.filter(r => r.text && !r.feedback);
+  const pending = cachedRecords.filter(r => (r.text || r.image) && !r.feedback);
   if (pending.length === 0) {
     alert('所有打卡记录都已有 AI 反馈啦 🎉');
     return;
@@ -879,7 +900,7 @@ async function batchAIFeedback() {
 
   for (const rec of pending) {
     try {
-      const feedback = await generateAIFeedback(rec.name, rec.text);
+      const feedback = await generateAIFeedback(rec.name, rec.text, rec.image || null);
       if (feedback) {
         const target = recordMap[rec.key];
         if (target) {
@@ -1075,10 +1096,10 @@ async function submitCheckin() {
     
     // 自动生成 AI 反馈（立即等待，不异步）
     const aiConfig = getAIConfig();
-    if (aiConfig.auto && aiConfig.key && text) {
+    if (aiConfig.auto && aiConfig.key && (text || imageData)) {
       loadingEl.querySelector('.streak-msg').textContent = 'AI 正在生成反馈...';
       try {
-        const feedback = await generateAIFeedback(targetName, text);
+        const feedback = await generateAIFeedback(targetName, text, imageData || null);
         if (feedback) {
           const allRecords = await apiGetRecordsFresh();
           const key = targetName + '_' + targetDay;
@@ -1191,7 +1212,7 @@ async function fetchAndRender() {
     const aiConfig = getAIConfig();
     const batchBtn = document.getElementById('batchAiBtn');
     if (batchBtn) {
-      const pendingCount = cachedRecords.filter(r => r.text && !r.feedback).length;
+      const pendingCount = cachedRecords.filter(r => (r.text || r.image) && !r.feedback).length;
       if (aiConfig.key && pendingCount > 0) {
         batchBtn.style.display = '';
         batchBtn.textContent = `🤖 批量 AI 反馈（${pendingCount}条待处理）`;
@@ -1432,7 +1453,7 @@ function renderFeed(records) {
           <div class="ai-label">🤖 AI 反馈</div>
           <div class="ai-text">${escapeHtml(r.feedback)}</div>
         </div>`;
-    } else if (r.text && getAIConfig().key) {
+    } else if ((r.text || r.image) && getAIConfig().key) {
       // 有 AI Key 才显示生成按钮
       feedbackHtml = `
         <div data-feedback-key="${escapeHtml(r.key)}">
