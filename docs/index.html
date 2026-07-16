@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<!-- v3.5 - 2026-07-16 18:57 改进AI反馈错误提示与配置状态 -->
+<!-- v3.6 - 2026-07-16 19:10 修复图片AI反馈（兼容DeepSeek纯文本API） -->
 <html lang="zh-CN">
 <head>
 <meta charset="UTF-8">
@@ -824,30 +824,22 @@ async function generateAIFeedback(name, text, image) {
     return { ok: false, error: 'no_content', message: '没有需要反馈的内容' };
   }
 
-  const systemPrompt = `你是一位温暖、有趣、懂得鼓励人的读书导师。用户分享了他们的读书内容（可能是文字心得，也可能是读书笔记的拍照），请你：
+  const systemPrompt = `你是一位温暖、有趣、懂得鼓励人的读书导师。用户分享了他们的读书内容，请你：
 1. 用 2-3 句话给出发自内心的鼓励和反馈
-2. 如果是文字心得，对内容进行回应；如果是图片（读书笔记/书页拍照），识别图片中的文字和内容并给出反馈
+2. 对文字心得进行回应，结合内容给出具体反馈
 3. 如果提到具体书籍或能识别出书名/内容，可以延伸一个相关的小知识或思考角度
 4. 风格要像朋友聊天一样自然，不要像 AI 在写作文
 5. 字数控制在 60-120 字之间
-6. 不要用"你的心得很好"这类套话开头`;
+6. 不要用"你的心得很好"这类套话开头
+7. 如果用户只上传了图片没有文字，请鼓励他/她把图片中的感悟或知识点用几句话总结出来，并表示期待看到文字分享`;
 
-  // 构建用户消息内容（支持多模态）
+  // DeepSeek 等模型不直接支持 image_url 多模态，图片记录走文字化/通用鼓励路径
   let userContent;
-  if (image && text) {
-    // 文字 + 图片
-    userContent = [
-      { type: 'text', text: `${name} 今天的读书打卡：\n\n${text}` },
-      { type: 'image_url', image_url: { url: image } }
-    ];
+  if (text && image) {
+    userContent = `${name} 今天的读书打卡：\n\n${text}\n\n（用户还上传了一张图片作为打卡补充）`;
   } else if (image) {
-    // 只有图片
-    userContent = [
-      { type: 'text', text: `${name} 上传了今天的读书打卡（拍照），请根据图片内容给出反馈` },
-      { type: 'image_url', image_url: { url: image } }
-    ];
+    userContent = `${name} 今天上传了读书打卡图片（读书笔记/书页拍照）。请用温暖的语气鼓励他/她，并邀请他/她下次可以补充几句文字心得，这样反馈会更具体。`;
   } else {
-    // 只有文字
     userContent = `${name} 今天的读书心得：\n\n${text}`;
   }
 
