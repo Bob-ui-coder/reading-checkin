@@ -217,6 +217,34 @@
   .settings-modal input[type="password"]:focus { border-color: var(--blue); }
   .settings-modal .help { font-size: 12px; color: #888; line-height: 1.6; margin-top: 8px; }
   .settings-modal .help a { color: var(--blue); }
+
+  .ai-feedback {
+    margin-top: 10px; padding: 10px 12px;
+    background: linear-gradient(135deg, #fef9e7, #fefce8);
+    border-radius: 10px; border: 1px solid #fde68a;
+    font-size: 13px; color: #92400e; line-height: 1.6;
+    position: relative;
+  }
+  .ai-feedback .ai-label {
+    font-size: 11px; color: #b45309; font-weight: 600;
+    margin-bottom: 4px; display: flex; align-items: center; gap: 4px;
+  }
+  .ai-feedback .ai-text { white-space: pre-wrap; word-break: break-word; }
+  .ai-dot { animation: aiPulse 1.5s infinite; }
+  @keyframes aiPulse { 0%,100%{opacity:1} 50%{opacity:.4} }
+  .btn-ai {
+    font-size: 11px; color: #b45309; cursor: pointer; background: linear-gradient(135deg, #fef3c7, #fef9c3);
+    border: 1px solid #fcd34d; padding: 4px 12px; border-radius: 12px;
+    margin-top: 6px; transition: all .2s;
+  }
+  .btn-ai:hover { background: #fde68a; transform: translateY(-1px); }
+  .btn-ai:disabled { opacity: .5; cursor: not-allowed; }
+  .btn-ai-batch {
+    font-size: 12px; color: #b45309; cursor: pointer; background: linear-gradient(135deg, #fef3c7, #fef9c3);
+    border: 1px solid #fcd34d; padding: 6px 16px; border-radius: 8px;
+    margin-left: 8px; transition: all .2s;
+  }
+  .btn-ai-batch:hover { background: #fde68a; }
 </style>
 </head>
 <body>
@@ -237,6 +265,7 @@
     <button class="btn btn-primary" onclick="fetchAndRender()">🔄 刷新</button>
     <button class="btn btn-outline" onclick="openSettings()">⚙️ 设置</button>
     <button class="btn btn-outline" onclick="exportData()">导出</button>
+    <button class="btn-ai-batch" onclick="batchAIFeedback()" id="batchAiBtn" style="display:none">🤖 批量 AI 反馈</button>
   </div>
 
   <div class="table-wrap"><table id="checkTable"></table></div>
@@ -323,7 +352,30 @@ function openSettings() {
           </div>
         </div>
 
-        <div class="help">
+        <div style="margin-top:16px;padding-top:16px;border-top:1px solid #eee">
+          <label style="font-size:13px;color:#555;display:block;margin-bottom:4px">🤖 AI 反馈（可选）</label>
+          <div class="hint" style="margin-bottom:8px">配置后可为打卡内容自动生成 AI 反馈</div>
+          
+          <label style="font-size:12px;color:#888;display:block;margin-bottom:2px">API 地址</label>
+          <input type="text" id="aiBaseUrl" value="${localStorage.getItem('reading_checkin_ai_base_url') || 'https://api.deepseek.com/v1'}" placeholder="https://api.deepseek.com/v1" style="width:100%;padding:8px 10px;border:1px solid #ddd;border-radius:6px;font-size:13px;margin-bottom:8px">
+          
+          <label style="font-size:12px;color:#888;display:block;margin-bottom:2px">API Key</label>
+          <input type="password" id="aiKey" value="${localStorage.getItem('reading_checkin_ai_key') || ''}" placeholder="sk-..." style="width:100%;padding:8px 10px;border:1px solid #ddd;border-radius:6px;font-size:13px;margin-bottom:8px">
+          
+          <label style="font-size:12px;color:#888;display:block;margin-bottom:2px">模型</label>
+          <input type="text" id="aiModel" value="${localStorage.getItem('reading_checkin_ai_model') || 'deepseek-chat'}" placeholder="deepseek-chat" style="width:100%;padding:8px 10px;border:1px solid #ddd;border-radius:6px;font-size:13px;margin-bottom:8px">
+          
+          <label style="display:flex;align-items:center;gap:8px;font-size:12px;color:#888;cursor:pointer">
+            <input type="checkbox" id="aiAutoToggle" ${localStorage.getItem('reading_checkin_ai_auto') !== 'false' ? 'checked' : ''} style="width:14px;height:14px">
+            打卡后自动生成 AI 反馈
+          </label>
+          <div class="hint" style="margin-top:6px;font-size:11px">
+            支持 OpenAI 兼容接口（DeepSeek / Groq / OpenAI 等）<br>
+            DeepSeek 注册获取 Key：<a href="https://platform.deepseek.com" target="_blank">platform.deepseek.com</a>
+          </div>
+        </div>
+
+        <div class="help" style="margin-top:12px">
           <strong>如何获取令牌？</strong><br>
           1. 打开 <a href="https://github.com/settings/tokens/new?scopes=gist&description=reading-checkin" target="_blank">GitHub Token 创建页</a><br>
           2. 勾选 <code>gist</code> 权限<br>
@@ -372,6 +424,12 @@ function saveSettings() {
   } else {
     localStorage.removeItem('reading_checkin_admin');
   }
+  
+  // AI 配置
+  localStorage.setItem('reading_checkin_ai_base_url', document.getElementById('aiBaseUrl').value.trim());
+  localStorage.setItem('reading_checkin_ai_key', document.getElementById('aiKey').value.trim());
+  localStorage.setItem('reading_checkin_ai_model', document.getElementById('aiModel').value.trim());
+  localStorage.setItem('reading_checkin_ai_auto', document.getElementById('aiAutoToggle').checked ? 'true' : 'false');
   
   closeSettings();
   updateTokenBanner();
@@ -497,6 +555,149 @@ async function apiDelete(name, day) {
 
 async function apiReset() {
   await apiSaveRecords([], 'replace');
+}
+
+// ===== AI 反馈 =====
+function getAIConfig() {
+  return {
+    baseUrl: (localStorage.getItem('reading_checkin_ai_base_url') || 'https://api.deepseek.com/v1').replace(/\/$/, ''),
+    key: localStorage.getItem('reading_checkin_ai_key') || '',
+    model: localStorage.getItem('reading_checkin_ai_model') || 'deepseek-chat',
+    auto: localStorage.getItem('reading_checkin_ai_auto') !== 'false'
+  };
+}
+
+async function generateAIFeedback(name, text) {
+  const config = getAIConfig();
+  if (!config.key || !text) return null;
+
+  const systemPrompt = `你是一位温暖、有趣、懂得鼓励人的读书导师。用户分享了他们的读书心得，请你：
+1. 用 2-3 句话给出发自内心的鼓励和反馈
+2. 如果心得中提到具体书籍内容，可以延伸一个相关的小知识或思考角度
+3. 风格要像朋友聊天一样自然，不要像 AI 在写作文
+4. 字数控制在 60-120 字之间
+5. 不要用"你的心得很好"这类套话开头`;
+
+  try {
+    const res = await fetch(config.baseUrl + '/chat/completions', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': 'Bearer ' + config.key
+      },
+      body: JSON.stringify({
+        model: config.model,
+        messages: [
+          { role: 'system', content: systemPrompt },
+          { role: 'user', content: `${name} 今天的读书心得：\n\n${text}` }
+        ],
+        max_tokens: 300,
+        temperature: 0.8
+      })
+    });
+
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.error?.message || 'AI 请求失败: ' + res.status);
+    }
+
+    const data = await res.json();
+    return data.choices[0].message.content.trim();
+  } catch (e) {
+    console.error('AI 反馈生成失败:', e);
+    return null;
+  }
+}
+
+async function requestAIFeedback(name, day) {
+  const rec = cachedRecords.find(r => r.key === name + '_' + day);
+  if (!rec || !rec.text) return;
+
+  // 显示加载状态
+  const card = document.querySelector(`[data-feedback-key="${name}_${day}"]`);
+  const btn = card?.querySelector('.btn-ai');
+  if (btn) { btn.disabled = true; btn.textContent = '⏳ AI 思考中...'; }
+
+  const feedback = await generateAIFeedback(name, rec.text);
+  
+  if (feedback) {
+    // 重新获取最新数据（生成反馈期间可能有其他人打卡），再更新这一条
+    const allRecords = await apiGetRecordsFresh();
+    const idx = allRecords.findIndex(r => r.key === name + '_' + day);
+    if (idx >= 0) {
+      allRecords[idx].feedback = feedback;
+      allRecords[idx].feedbackTime = Date.now();
+    }
+    await apiSaveRecords(allRecords, 'replace');
+    cachedRecords = allRecords;
+    renderAll(cachedRecords);
+  } else if (btn) {
+    btn.disabled = false;
+    btn.textContent = '🤖 AI 反馈';
+    alert('AI 反馈生成失败，请检查 API 配置是否正确');
+  }
+}
+
+async function batchAIFeedback() {
+  const config = getAIConfig();
+  if (!config.key) {
+    alert('请先在设置中配置 AI API Key');
+    openSettings();
+    return;
+  }
+
+  const pending = cachedRecords.filter(r => r.text && !r.feedback);
+  if (pending.length === 0) {
+    alert('所有打卡记录都已有 AI 反馈啦 🎉');
+    return;
+  }
+
+  if (!confirm(`还有 ${pending.length} 条记录没有 AI 反馈，是否批量生成？（可能需要一些时间）`)) return;
+
+  let success = 0;
+  let fail = 0;
+  
+  // 先获取最新数据
+  let allRecords = await apiGetRecordsFresh();
+  const recordMap = {};
+  allRecords.forEach(r => { recordMap[r.key] = r; });
+
+  for (const rec of pending) {
+    try {
+      const feedback = await generateAIFeedback(rec.name, rec.text);
+      if (feedback) {
+        const target = recordMap[rec.key];
+        if (target) {
+          target.feedback = feedback;
+          target.feedbackTime = Date.now();
+        }
+        success++;
+      } else {
+        fail++;
+      }
+    } catch (e) {
+      fail++;
+    }
+  }
+
+  // 处理完所有后再获取一次最新数据并合并
+  allRecords = await apiGetRecordsFresh();
+  for (const rec of pending) {
+    if (rec.feedback) {
+      const idx = allRecords.findIndex(r => r.key === rec.key);
+      if (idx >= 0) {
+        allRecords[idx].feedback = rec.feedback;
+        allRecords[idx].feedbackTime = rec.feedbackTime;
+      }
+    }
+  }
+  await apiSaveRecords(allRecords, 'replace');
+  cachedRecords = allRecords;
+  renderAll(cachedRecords);
+  
+  let msg = `批量生成完成！\n✅ 成功: ${success} 条`;
+  if (fail > 0) msg += `\n❌ 失败: ${fail} 条`;
+  alert(msg);
 }
 
 // ===== 图片压缩 =====
@@ -655,13 +856,32 @@ async function submitCheckin() {
   document.body.appendChild(loadingEl);
 
   try {
-    const savedRecord = await apiCheckin(targetName, targetDay, text, imageData || null);
+    await apiCheckin(targetName, targetDay, text, imageData || null);
     // 立即从 API 获取最新数据（不走CDN，避免缓存问题）
     cachedRecords = await apiGetRecordsFresh();
     renderAll(cachedRecords);
     document.getElementById('loadingOverlay').remove();
     const streak = calcStreak(targetName);
     showStreakPopup(targetName, streak);
+    
+    // 自动生成 AI 反馈（异步，不阻塞 UI）
+    const aiConfig = getAIConfig();
+    if (aiConfig.auto && aiConfig.key && text) {
+      generateAIFeedback(targetName, text).then(async (feedback) => {
+        if (feedback) {
+          const allRecords = await apiGetRecordsFresh();
+          const key = targetName + '_' + targetDay;
+          const idx = allRecords.findIndex(r => r.key === key);
+          if (idx >= 0) {
+            allRecords[idx].feedback = feedback;
+            allRecords[idx].feedbackTime = Date.now();
+            await apiSaveRecords(allRecords, 'replace');
+            cachedRecords = allRecords;
+            renderAll(cachedRecords);
+          }
+        }
+      }).catch(() => {});
+    }
   } catch (e) {
     document.getElementById('loadingOverlay').remove();
     console.error('打卡保存失败:', e);
@@ -741,7 +961,23 @@ async function fetchAndRender() {
   try {
     // 有 token 时从 API 直接读取（无CDN缓存），否则从 CDN 读取
     cachedRecords = getToken() ? await apiGetRecordsFresh() : await apiGetRecords();
-    document.getElementById('debugInfo').textContent = '✅ 数据已同步 · ' + cachedRecords.length + ' 条记录 · 用户: ' + (getCurrentUser() || '未设置') + (isAdmin() ? ' · 🔑 管理员' : '') + ' · 令牌: ' + (getToken() ? '已设置' : '未设置') + ' · ' + new Date().toLocaleTimeString();
+    document.getElementById('debugInfo').textContent = '✅ 数据已同步 · ' + cachedRecords.length + ' 条记录 · 用户: ' + (getCurrentUser() || '未设置') + (isAdmin() ? ' · 🔑 管理员' : '') + ' · 令牌: ' + (getToken() ? '已设置' : '未设置') + ' · AI: ' + (getAIConfig().key ? '已配置' : '未配置') + ' · ' + new Date().toLocaleTimeString();
+    
+    // 显示/隐藏批量AI按钮
+    const aiConfig = getAIConfig();
+    const batchBtn = document.getElementById('batchAiBtn');
+    if (batchBtn) {
+      const pendingCount = cachedRecords.filter(r => r.text && !r.feedback).length;
+      if (aiConfig.key && pendingCount > 0) {
+        batchBtn.style.display = '';
+        batchBtn.textContent = `🤖 批量 AI 反馈（${pendingCount}条待处理）`;
+      } else if (aiConfig.key) {
+        batchBtn.style.display = '';
+        batchBtn.textContent = '🤖 批量 AI 反馈';
+      } else {
+        batchBtn.style.display = 'none';
+      }
+    }
   } catch (e) {
     console.error('获取数据失败:', e);
     cachedRecords = [];
@@ -809,6 +1045,22 @@ function renderFeed(records) {
     const deleteBtn = canDelete
       ? `<button class="delete-btn" onclick="delRecord('${escapeHtml(r.name)}',${r.day})">删除此条</button>`
       : '';
+    
+    // AI 反馈区域
+    let feedbackHtml = '';
+    if (r.feedback) {
+      feedbackHtml = `
+        <div class="ai-feedback">
+          <div class="ai-label">🤖 AI 反馈</div>
+          <div class="ai-text">${escapeHtml(r.feedback)}</div>
+        </div>`;
+    } else if (r.text) {
+      feedbackHtml = `
+        <div data-feedback-key="${escapeHtml(r.key)}">
+          <button class="btn-ai" onclick="event.stopPropagation();requestAIFeedback('${escapeHtml(r.name)}',${r.day})">🤖 AI 反馈</button>
+        </div>`;
+    }
+    
     return `
       <div class="card">
         <div class="avatar">${initial}</div>
@@ -816,6 +1068,7 @@ function renderFeed(records) {
           <div class="meta"><strong>${escapeHtml(r.name)}</strong> · Day ${r.day} · ${dateStr}</div>
           ${r.text ? `<div class="text">${escapeHtml(r.text)}</div>` : ''}
           ${r.image ? `<div class="img-row"><img src="${r.image}" onclick="openLightbox(this.src)" loading="lazy"></div>` : ''}
+          ${feedbackHtml}
           ${deleteBtn}
         </div>
       </div>`;
