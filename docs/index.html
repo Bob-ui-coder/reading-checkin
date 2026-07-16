@@ -353,25 +353,29 @@ function openSettings() {
         </div>
 
         <div style="margin-top:16px;padding-top:16px;border-top:1px solid #eee">
-          <label style="font-size:13px;color:#555;display:block;margin-bottom:4px">🤖 AI 反馈（可选）</label>
-          <div class="hint" style="margin-bottom:8px">配置后可为打卡内容自动生成 AI 反馈</div>
+          <label style="font-size:13px;color:#555;display:block;margin-bottom:4px">🤖 AI 反馈</label>
+          ${isAdmin() ? `
+          <div class="hint" style="margin-bottom:8px;color:#059669">🔑 管理员：下方配置将保存到云端，全员无需配置即可使用 AI 反馈</div>
+          <div id="sharedAiSection" style="background:#f0fdf4;border:1px solid #bbf7d0;border-radius:8px;padding:10px 12px;margin-bottom:12px">
+            <label style="font-size:12px;color:#065f46;display:block;margin-bottom:4px;font-weight:600">📡 团队共享 AI 配置</label>
+            <input type="text" id="sharedAiBaseUrl" value="${(sharedAIConfig && sharedAIConfig.baseUrl) || 'https://api.deepseek.com/v1'}" placeholder="API 地址" style="width:100%;padding:8px 10px;border:1px solid #86efac;border-radius:6px;font-size:13px;margin-bottom:6px">
+            <input type="password" id="sharedAiKey" value="${(sharedAIConfig && sharedAIConfig.key) || ''}" placeholder="API Key（sk-...）" style="width:100%;padding:8px 10px;border:1px solid #86efac;border-radius:6px;font-size:13px;margin-bottom:6px">
+            <input type="text" id="sharedAiModel" value="${(sharedAIConfig && sharedAIConfig.model) || 'deepseek-chat'}" placeholder="模型名" style="width:100%;padding:8px 10px;border:1px solid #86efac;border-radius:6px;font-size:13px">
+            <div class="hint" style="margin-top:4px;font-size:11px;color:#065f46">保存后，所有团队成员无需配置即可使用 AI 反馈</div>
+          </div>
+          <div style="border-top:1px dashed #ddd;padding-top:12px;margin-bottom:12px"></div>
+          ` : ''}
+          <div class="hint" style="margin-bottom:8px">${isAdmin() ? '个人覆盖配置（覆盖团队共享 Key，留空则使用团队共享）' : 'AI 已由管理员配置，也可以使用自己的 Key'}</div>
           
-          <label style="font-size:12px;color:#888;display:block;margin-bottom:2px">API 地址</label>
-          <input type="text" id="aiBaseUrl" value="${localStorage.getItem('reading_checkin_ai_base_url') || 'https://api.deepseek.com/v1'}" placeholder="https://api.deepseek.com/v1" style="width:100%;padding:8px 10px;border:1px solid #ddd;border-radius:6px;font-size:13px;margin-bottom:8px">
-          
-          <label style="font-size:12px;color:#888;display:block;margin-bottom:2px">API Key</label>
-          <input type="password" id="aiKey" value="${localStorage.getItem('reading_checkin_ai_key') || ''}" placeholder="sk-..." style="width:100%;padding:8px 10px;border:1px solid #ddd;border-radius:6px;font-size:13px;margin-bottom:8px">
-          
-          <label style="font-size:12px;color:#888;display:block;margin-bottom:2px">模型</label>
-          <input type="text" id="aiModel" value="${localStorage.getItem('reading_checkin_ai_model') || 'deepseek-chat'}" placeholder="deepseek-chat" style="width:100%;padding:8px 10px;border:1px solid #ddd;border-radius:6px;font-size:13px;margin-bottom:8px">
+          <label style="font-size:12px;color:#888;display:block;margin-bottom:2px">个人 API Key（可选）</label>
+          <input type="password" id="aiKey" value="${localStorage.getItem('reading_checkin_ai_key') || ''}" placeholder="留空则使用团队共享 Key" style="width:100%;padding:8px 10px;border:1px solid #ddd;border-radius:6px;font-size:13px;margin-bottom:8px">
           
           <label style="display:flex;align-items:center;gap:8px;font-size:12px;color:#888;cursor:pointer">
             <input type="checkbox" id="aiAutoToggle" ${localStorage.getItem('reading_checkin_ai_auto') !== 'false' ? 'checked' : ''} style="width:14px;height:14px">
             打卡后自动生成 AI 反馈
           </label>
           <div class="hint" style="margin-top:6px;font-size:11px">
-            支持 OpenAI 兼容接口（DeepSeek / Groq / OpenAI 等）<br>
-            DeepSeek 注册获取 Key：<a href="https://platform.deepseek.com" target="_blank">platform.deepseek.com</a>
+            DeepSeek 注册获取 Key：<a href="https://platform.deepseek.com" target="_blank">platform.deepseek.com</a>（非常便宜，几块钱用很久）
           </div>
         </div>
 
@@ -425,15 +429,49 @@ function saveSettings() {
     localStorage.removeItem('reading_checkin_admin');
   }
   
-  // AI 配置
-  localStorage.setItem('reading_checkin_ai_base_url', document.getElementById('aiBaseUrl').value.trim());
-  localStorage.setItem('reading_checkin_ai_key', document.getElementById('aiKey').value.trim());
-  localStorage.setItem('reading_checkin_ai_model', document.getElementById('aiModel').value.trim());
+  // 个人 AI 配置
+  const personalKey = document.getElementById('aiKey').value.trim();
+  if (personalKey) {
+    localStorage.setItem('reading_checkin_ai_key', personalKey);
+  } else {
+    localStorage.removeItem('reading_checkin_ai_key');
+  }
   localStorage.setItem('reading_checkin_ai_auto', document.getElementById('aiAutoToggle').checked ? 'true' : 'false');
+  
+  // 管理员共享 AI 配置（保存到 Gist）
+  if (isAdmin() || (adminToggle && document.getElementById('adminCode').value.trim() === ADMIN_CODE)) {
+    const sharedKeyEl = document.getElementById('sharedAiKey');
+    if (sharedKeyEl) {
+      const sharedKey = sharedKeyEl.value.trim();
+      const sharedBaseUrl = document.getElementById('sharedAiBaseUrl').value.trim();
+      const sharedModel = document.getElementById('sharedAiModel').value.trim();
+      if (sharedKey) {
+        sharedAIConfig = { baseUrl: sharedBaseUrl, key: sharedKey, model: sharedModel, auto: true };
+        // 异步保存到 Gist（不阻塞关闭弹窗）
+        saveSharedAIConfigToGist().catch(e => console.error('保存共享AI配置失败:', e));
+      }
+    }
+  }
   
   closeSettings();
   updateTokenBanner();
   fetchAndRender();
+}
+
+// 保存共享 AI 配置到 Gist
+async function saveSharedAIConfigToGist() {
+  const token = getToken();
+  if (!token || !sharedAIConfig) return;
+  const records = await apiGetRecordsFresh();
+  const content = buildGistContent(records);
+  await fetch(GIST_API_URL, {
+    method: 'PATCH',
+    headers: {
+      'Authorization': 'Bearer ' + token,
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify({ files: { 'data.json': { content } } })
+  });
 }
 
 // ===== Gist API =====
@@ -442,6 +480,7 @@ async function apiGetRecords() {
   const res = await fetch(GIST_RAW_URL + '?t=' + Date.now());
   if (!res.ok) throw new Error('获取数据失败: ' + res.status);
   const data = await res.json();
+  if (data.aiConfig) sharedAIConfig = data.aiConfig;
   return data.records || [];
 }
 
@@ -455,17 +494,46 @@ async function apiGetRecordsFresh() {
   if (!res.ok) throw new Error('获取数据失败: ' + res.status);
   const gist = await res.json();
   const content = gist.files['data.json']?.content || '{"records":[]}';
-  return JSON.parse(content).records || [];
+  const data = JSON.parse(content);
+  if (data.aiConfig) sharedAIConfig = data.aiConfig;
+  return data.records || [];
+}
+
+// 构建 Gist 数据（保留共享 AI 配置）
+function buildGistContent(records) {
+  const obj = { records };
+  if (sharedAIConfig && sharedAIConfig.key) obj.aiConfig = sharedAIConfig;
+  return JSON.stringify(obj, null, 2);
+}
+
+// 从 Gist 读取 aiConfig（不依赖全局变量，用于 save 时获取最新值）
+async function fetchAIConfigFromGist(token) {
+  try {
+    const getRes = await fetch(GIST_API_URL, {
+      headers: { 'Authorization': 'Bearer ' + token }
+    });
+    if (getRes.ok) {
+      const gist = await getRes.json();
+      const content = gist.files['data.json']?.content || '{}';
+      const data = JSON.parse(content);
+      return data.aiConfig || null;
+    }
+  } catch (e) { /* ignore */ }
+  return sharedAIConfig;
 }
 
 async function apiSaveRecords(records, mode) {
   const token = getToken();
   if (!token) throw new Error('未设置令牌，请先点击"设置"配置令牌');
 
+  // 确保 sharedAIConfig 是最新的
+  const latestAIConfig = await fetchAIConfigFromGist(token);
+  if (latestAIConfig) sharedAIConfig = latestAIConfig;
+
   // mode === 'replace' 时直接覆盖（用于删除/重置）
   // mode === 'merge' 或未指定时合并（用于打卡，防止覆盖别人的数据）
   if (mode === 'replace') {
-    const content = JSON.stringify({ records }, null, 2);
+    const content = buildGistContent(records);
     const patchRes = await fetch(GIST_API_URL, {
       method: 'PATCH',
       headers: {
@@ -498,7 +566,9 @@ async function apiSaveRecords(records, mode) {
       let existingRecords = [];
       try {
         const existingContent = gist.files['data.json']?.content || '{"records":[]}';
-        existingRecords = JSON.parse(existingContent).records || [];
+        const existingData = JSON.parse(existingContent);
+        existingRecords = existingData.records || [];
+        if (existingData.aiConfig) sharedAIConfig = existingData.aiConfig;
       } catch (e) { /* ignore */ }
 
       const newKeys = new Set(records.map(r => r.key));
@@ -507,7 +577,7 @@ async function apiSaveRecords(records, mode) {
         if (!newKeys.has(r.key)) merged.push(r);
       }
 
-      const mergedContent = JSON.stringify({ records: merged }, null, 2);
+      const mergedContent = buildGistContent(merged);
       const patchRes = await fetch(GIST_API_URL, {
         method: 'PATCH',
         headers: {
@@ -559,11 +629,30 @@ async function apiReset() {
 
 // ===== AI 反馈 =====
 function getAIConfig() {
+  // 优先使用本地配置（个人覆盖）
+  const localKey = localStorage.getItem('reading_checkin_ai_key');
+  if (localKey) {
+    return {
+      baseUrl: (localStorage.getItem('reading_checkin_ai_base_url') || 'https://api.deepseek.com/v1').replace(/\/$/, ''),
+      key: localKey,
+      model: localStorage.getItem('reading_checkin_ai_model') || 'deepseek-chat',
+      auto: localStorage.getItem('reading_checkin_ai_auto') !== 'false'
+    };
+  }
+  // 使用管理员在 Gist 中配置的共享 AI Key（全员可用）
+  if (sharedAIConfig && sharedAIConfig.key) {
+    return {
+      baseUrl: (sharedAIConfig.baseUrl || 'https://api.deepseek.com/v1').replace(/\/$/, ''),
+      key: sharedAIConfig.key,
+      model: sharedAIConfig.model || 'deepseek-chat',
+      auto: sharedAIConfig.auto !== false
+    };
+  }
   return {
-    baseUrl: (localStorage.getItem('reading_checkin_ai_base_url') || 'https://api.deepseek.com/v1').replace(/\/$/, ''),
-    key: localStorage.getItem('reading_checkin_ai_key') || '',
-    model: localStorage.getItem('reading_checkin_ai_model') || 'deepseek-chat',
-    auto: localStorage.getItem('reading_checkin_ai_auto') !== 'false'
+    baseUrl: 'https://api.deepseek.com/v1',
+    key: '',
+    model: 'deepseek-chat',
+    auto: true
   };
 }
 
@@ -610,6 +699,7 @@ async function generateAIFeedback(name, text) {
 }
 
 async function requestAIFeedback(name, day) {
+  if (!getToken()) { alert('请先设置打卡令牌（GitHub Token）才能保存 AI 反馈'); openSettings(); return; }
   const rec = cachedRecords.find(r => r.key === name + '_' + day);
   if (!rec || !rec.text) return;
 
@@ -639,6 +729,7 @@ async function requestAIFeedback(name, day) {
 }
 
 async function batchAIFeedback() {
+  if (!getToken()) { alert('请先设置打卡令牌（GitHub Token）才能生成 AI 反馈'); openSettings(); return; }
   const config = getAIConfig();
   if (!config.key) {
     alert('请先在设置中配置 AI API Key');
@@ -891,6 +982,7 @@ async function submitCheckin() {
 
 // ===== Streak =====
 let cachedRecords = [];
+let sharedAIConfig = null; // 从 Gist 读取的共享 AI 配置
 
 function calcStreak(name) {
   const days = cachedRecords
@@ -1054,7 +1146,8 @@ function renderFeed(records) {
           <div class="ai-label">🤖 AI 反馈</div>
           <div class="ai-text">${escapeHtml(r.feedback)}</div>
         </div>`;
-    } else if (r.text) {
+    } else if (r.text && getAIConfig().key) {
+      // 有 AI Key 才显示生成按钮
       feedbackHtml = `
         <div data-feedback-key="${escapeHtml(r.key)}">
           <button class="btn-ai" onclick="event.stopPropagation();requestAIFeedback('${escapeHtml(r.name)}',${r.day})">🤖 AI 反馈</button>
