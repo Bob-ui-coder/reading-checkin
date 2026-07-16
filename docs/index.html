@@ -949,17 +949,13 @@ async function submitCheckin() {
 
   try {
     await apiCheckin(targetName, targetDay, text, imageData || null);
-    // 立即从 API 获取最新数据（不走CDN，避免缓存问题）
-    cachedRecords = await apiGetRecordsFresh();
-    renderAll(cachedRecords);
-    document.getElementById('loadingOverlay').remove();
-    const streak = calcStreak(targetName);
-    showStreakPopup(targetName, streak);
     
-    // 自动生成 AI 反馈（异步，不阻塞 UI）
+    // 自动生成 AI 反馈（立即等待，不异步）
     const aiConfig = getAIConfig();
     if (aiConfig.auto && aiConfig.key && text) {
-      generateAIFeedback(targetName, text).then(async (feedback) => {
+      loadingEl.querySelector('.streak-msg').textContent = 'AI 正在生成反馈...';
+      try {
+        const feedback = await generateAIFeedback(targetName, text);
         if (feedback) {
           const allRecords = await apiGetRecordsFresh();
           const key = targetName + '_' + targetDay;
@@ -968,12 +964,20 @@ async function submitCheckin() {
             allRecords[idx].feedback = feedback;
             allRecords[idx].feedbackTime = Date.now();
             await apiSaveRecords(allRecords, 'replace');
-            cachedRecords = allRecords;
-            renderAll(cachedRecords);
           }
         }
-      }).catch(() => {});
+      } catch (aiErr) {
+        console.error('AI 反馈生成失败:', aiErr);
+        // AI 失败不影响打卡结果
+      }
     }
+    
+    // 全部完成后刷新界面
+    cachedRecords = await apiGetRecordsFresh();
+    renderAll(cachedRecords);
+    document.getElementById('loadingOverlay').remove();
+    const streak = calcStreak(targetName);
+    showStreakPopup(targetName, streak);
   } catch (e) {
     document.getElementById('loadingOverlay').remove();
     console.error('打卡保存失败:', e);
