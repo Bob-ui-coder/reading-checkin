@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<!-- v3.4 - 2026-07-16 17:42 PWA离线缓存+CloudStudio镜像 -->
+<!-- v3.5 - 2026-07-16 18:57 改进AI反馈错误提示与配置状态 -->
 <html lang="zh-CN">
 <head>
 <meta charset="UTF-8">
@@ -217,6 +217,19 @@
   .token-banner .set-btn:hover { background: #d97706; }
   .token-banner.hidden { display: none; }
 
+  .ai-banner {
+    background: #fee2e2; border: 1px solid #fca5a5; border-radius: 10px;
+    padding: 12px 16px; margin-bottom: 16px; font-size: 13px; color: #991b1b;
+    display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  }
+  .ai-banner.ok {
+    background: #d1fae5; border-color: #6ee7b7; color: #065f46;
+  }
+  .ai-banner .set-btn { background: #ef4444; color: #fff; border: none; padding: 6px 16px; border-radius: 6px; cursor: pointer; font-size: 13px; white-space: nowrap; }
+  .ai-banner .set-btn:hover { background: #dc2626; }
+  .ai-banner.ok .set-btn { background: #10b981; }
+  .ai-banner.hidden { display: none; }
+
   .settings-modal input[type="password"] {
     width: 100%; padding: 10px 12px; border: 1px solid #ddd; border-radius: 8px;
     font-size: 14px; margin: 8px 0; outline: none;
@@ -377,6 +390,11 @@
     <button class="set-btn" onclick="openSettings()">设置令牌</button>
   </div>
 
+  <div class="ai-banner" id="aiBanner">
+    <span>🤖 AI 反馈未配置：管理员请设置共享 AI Key，或普通成员可在设置中输入自己的 Key</span>
+    <button class="set-btn" onclick="openSettings()">配置 AI</button>
+  </div>
+
   <div class="toolbar">
     <label>天数：</label>
     <input type="number" id="dayCount" value="7" min="1" max="31">
@@ -446,6 +464,23 @@ function updateTokenBanner() {
     banner.classList.remove('hidden');
     const msg = !getToken() ? '还未设置打卡令牌' : '还未设置你的名字';
     banner.querySelector('span').textContent = '⚠️ ' + msg + '，请先完成设置才能打卡';
+  }
+  updateAIBanner();
+}
+
+function updateAIBanner() {
+  const banner = document.getElementById('aiBanner');
+  if (!banner) return;
+  const config = getAIConfig();
+  if (config.key) {
+    banner.classList.add('ok');
+    banner.classList.remove('hidden');
+    banner.querySelector('span').textContent = '✅ AI 反馈已配置（' + (localStorage.getItem('reading_checkin_ai_key') ? '个人 Key' : '团队共享 Key') + '）';
+    banner.querySelector('.set-btn').textContent = '修改';
+  } else {
+    banner.classList.remove('ok', 'hidden');
+    banner.querySelector('span').textContent = '🤖 AI 反馈未配置：管理员请设置共享 AI Key，或普通成员可在设置中输入自己的 Key';
+    banner.querySelector('.set-btn').textContent = '配置 AI';
   }
 }
 
@@ -782,8 +817,12 @@ function getAIConfig() {
 
 async function generateAIFeedback(name, text, image) {
   const config = getAIConfig();
-  if (!config.key) return null;
-  if (!text && !image) return null;
+  if (!config.key) {
+    return { ok: false, error: 'no_key', message: '未配置 AI API Key' };
+  }
+  if (!text && !image) {
+    return { ok: false, error: 'no_content', message: '没有需要反馈的内容' };
+  }
 
   const systemPrompt = `你是一位温暖、有趣、懂得鼓励人的读书导师。用户分享了他们的读书内容（可能是文字心得，也可能是读书笔记的拍照），请你：
 1. 用 2-3 句话给出发自内心的鼓励和反馈
@@ -832,14 +871,21 @@ async function generateAIFeedback(name, text, image) {
 
     if (!res.ok) {
       const err = await res.json().catch(() => ({}));
-      throw new Error(err.error?.message || 'AI 请求失败: ' + res.status);
+      const msg = err.error?.message || ('HTTP ' + res.status);
+      if (res.status === 401) {
+        return { ok: false, error: 'unauthorized', message: 'API Key 无效或已过期，请检查 AI 配置' };
+      }
+      if (res.status === 429) {
+        return { ok: false, error: 'rate_limit', message: 'API 请求太频繁，请稍后再试' };
+      }
+      return { ok: false, error: 'api_error', message: 'AI 接口错误：' + msg };
     }
 
     const data = await res.json();
-    return data.choices[0].message.content.trim();
+    return { ok: true, feedback: data.choices[0].message.content.trim() };
   } catch (e) {
     console.error('AI 反馈生成失败:', e);
-    return null;
+    return { ok: false, error: 'network', message: '网络异常，请检查网络后重试' };
   }
 }
 
@@ -853,9 +899,10 @@ async function requestAIFeedback(name, day) {
   const btn = card?.querySelector('.btn-ai');
   if (btn) { btn.disabled = true; btn.textContent = '⏳ AI 思考中...'; }
 
-  const feedback = await generateAIFeedback(name, rec.text, rec.image || null);
+  const result = await generateAIFeedback(name, rec.text, rec.image || null);
   
-  if (feedback) {
+  if (result.ok) {
+    const feedback = result.feedback;
     // 重新获取最新数据（生成反馈期间可能有其他人打卡），再更新这一条
     const allRecords = await apiGetRecordsFresh();
     const idx = allRecords.findIndex(r => r.key === name + '_' + day);
@@ -866,10 +913,15 @@ async function requestAIFeedback(name, day) {
     await apiSaveRecords(allRecords, 'replace');
     cachedRecords = allRecords;
     renderAll(cachedRecords);
-  } else if (btn) {
-    btn.disabled = false;
-    btn.textContent = '🤖 AI 反馈';
-    alert('AI 反馈生成失败，请检查 API 配置是否正确');
+  } else {
+    if (btn) { btn.disabled = false; btn.textContent = '🤖 AI 反馈'; }
+    if (result.error === 'no_key') {
+      alert('AI 反馈未配置：\n\n1. 如果你是管理员：打开设置 → 开启管理员模式 → 输入共享 AI Key\n2. 如果你不是管理员：请联系管理员配置 AI Key，或点击设置输入自己的 Key');
+    } else if (result.error === 'unauthorized') {
+      alert('AI Key 无效或已过期：\n\n请检查设置中的 API Key 是否正确（DeepSeek 平台 keys 页面查看/重新生成）');
+    } else {
+      alert('AI 反馈生成失败：' + result.message);
+    }
   }
 }
 
@@ -890,29 +942,25 @@ async function batchAIFeedback() {
 
   if (!confirm(`还有 ${pending.length} 条记录没有 AI 反馈，是否批量生成？（可能需要一些时间）`)) return;
 
-  let success = 0;
-  let fail = 0;
-  
-  // 先获取最新数据
-  let allRecords = await apiGetRecordsFresh();
-  const recordMap = {};
-  allRecords.forEach(r => { recordMap[r.key] = r; });
+  let firstError = '';
 
   for (const rec of pending) {
     try {
-      const feedback = await generateAIFeedback(rec.name, rec.text, rec.image || null);
-      if (feedback) {
+      const result = await generateAIFeedback(rec.name, rec.text, rec.image || null);
+      if (result.ok) {
         const target = recordMap[rec.key];
         if (target) {
-          target.feedback = feedback;
+          target.feedback = result.feedback;
           target.feedbackTime = Date.now();
         }
         success++;
       } else {
         fail++;
+        if (!firstError) firstError = result.message;
       }
     } catch (e) {
       fail++;
+      if (!firstError) firstError = e.message;
     }
   }
 
@@ -930,9 +978,10 @@ async function batchAIFeedback() {
   await apiSaveRecords(allRecords, 'replace');
   cachedRecords = allRecords;
   renderAll(cachedRecords);
-  
+
   let msg = `批量生成完成！\n✅ 成功: ${success} 条`;
   if (fail > 0) msg += `\n❌ 失败: ${fail} 条`;
+  if (firstError) msg += `\n\n首次失败原因：${firstError}`;
   alert(msg);
 }
 
@@ -1099,16 +1148,21 @@ async function submitCheckin() {
     if (aiConfig.auto && aiConfig.key && (text || imageData)) {
       loadingEl.querySelector('.streak-msg').textContent = 'AI 正在生成反馈...';
       try {
-        const feedback = await generateAIFeedback(targetName, text, imageData || null);
-        if (feedback) {
+        const result = await generateAIFeedback(targetName, text, imageData || null);
+        if (result.ok) {
           const allRecords = await apiGetRecordsFresh();
           const key = targetName + '_' + targetDay;
           const idx = allRecords.findIndex(r => r.key === key);
           if (idx >= 0) {
-            allRecords[idx].feedback = feedback;
+            allRecords[idx].feedback = result.feedback;
             allRecords[idx].feedbackTime = Date.now();
             await apiSaveRecords(allRecords, 'replace');
           }
+        } else {
+          console.error('AI 反馈生成失败:', result.message);
+          // AI 失败不影响打卡结果，但保存错误原因到 loading 提示
+          loadingEl.querySelector('.streak-msg').textContent = '打卡已保存，AI 反馈未生成';
+          await new Promise(r => setTimeout(r, 1500));
         }
       } catch (aiErr) {
         console.error('AI 反馈生成失败:', aiErr);
