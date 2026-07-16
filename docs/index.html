@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<!-- v3.3 - 2026-07-16 16:10 AI反馈支持图片 -->
+<!-- v3.4 - 2026-07-16 17:42 PWA离线缓存+CloudStudio镜像 -->
 <html lang="zh-CN">
 <head>
 <meta charset="UTF-8">
@@ -1524,6 +1524,30 @@ updateTokenBanner();
 fetchAndRender();
 // 每60秒自动刷新（降低频率避免CDN缓存问题）
 setInterval(fetchAndRender, 60000);
+
+// ===== Service Worker 离线缓存 =====
+if ('serviceWorker' in navigator) {
+  navigator.serviceWorker.register('./sw.js').catch(() => {});
+}
+
+// ===== 网络状态监控 =====
+const offlineBar = document.createElement('div');
+offlineBar.id = 'offlineBar';
+offlineBar.innerHTML = '🔌 当前离线 · 显示缓存数据';
+offlineBar.style.cssText = 'display:none;position:fixed;top:0;left:0;right:0;z-index:10000;background:#f97316;color:#fff;text-align:center;padding:8px;font-size:14px;font-weight:500;';
+
+window.addEventListener('online', () => {
+  offlineBar.style.display = 'none';
+  offlineBar.style.background = '#10b981';
+  offlineBar.textContent = '✅ 网络已恢复 · 正在刷新...';
+  offlineBar.style.display = 'block';
+  setTimeout(() => { offlineBar.style.display = 'none'; }, 2000);
+  fetchAndRender();
+});
+
+window.addEventListener('offline', () => {
+  offlineBar.style.display = 'block';
+});
 </script>
 </body>
 </html>
