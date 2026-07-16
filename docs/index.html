@@ -379,11 +379,25 @@ function saveSettings() {
 }
 
 // ===== Gist API =====
+// 从 CDN 读取（可能有缓存延迟，但不需 token）
 async function apiGetRecords() {
   const res = await fetch(GIST_RAW_URL + '?t=' + Date.now());
   if (!res.ok) throw new Error('获取数据失败: ' + res.status);
   const data = await res.json();
   return data.records || [];
+}
+
+// 从 Gist API 直接读取（实时无缓存，需要 token）
+async function apiGetRecordsFresh() {
+  const token = getToken();
+  if (!token) return await apiGetRecords(); // 没 token 就回退到 CDN
+  const res = await fetch(GIST_API_URL, {
+    headers: { 'Authorization': 'Bearer ' + token }
+  });
+  if (!res.ok) throw new Error('获取数据失败: ' + res.status);
+  const gist = await res.json();
+  const content = gist.files['data.json']?.content || '{"records":[]}';
+  return JSON.parse(content).records || [];
 }
 
 async function apiSaveRecords(records, mode) {
@@ -462,7 +476,7 @@ async function apiSaveRecords(records, mode) {
 }
 
 async function apiCheckin(name, day, text, image) {
-  const records = await apiGetRecords();
+  const records = await apiGetRecordsFresh();
   const key = name + '_' + day;
   const idx = records.findIndex(r => r.key === key);
   const record = { key, name, day: parseInt(day), text: text || '', image: image || null, time: Date.now() };
@@ -475,7 +489,7 @@ async function apiCheckin(name, day, text, image) {
 }
 
 async function apiDelete(name, day) {
-  const records = await apiGetRecords();
+  const records = await apiGetRecordsFresh();
   const key = name + '_' + day;
   const filtered = records.filter(r => r.key !== key);
   await apiSaveRecords(filtered, 'replace'); // 用 replace 模式，否则合并逻辑会把删的加回来
@@ -585,10 +599,10 @@ async function deleteFromModal() {
   
   try {
     await apiDelete(name, day);
-    cachedRecords = cachedRecords.filter(r => r.key !== name + '_' + day);
+    // 立即从 API 获取最新数据（不走CDN，避免缓存返回已删记录）
+    cachedRecords = await apiGetRecordsFresh();
     renderAll(cachedRecords);
     document.getElementById('loadingOverlay').remove();
-    setTimeout(() => fetchAndRender(), 3000);
   } catch (e) {
     document.getElementById('loadingOverlay').remove();
     alert('删除失败: ' + e.message);
@@ -642,16 +656,12 @@ async function submitCheckin() {
 
   try {
     const savedRecord = await apiCheckin(targetName, targetDay, text, imageData || null);
-    // 本地立即更新数据（不等 CDN 刷新）
-    const idx = cachedRecords.findIndex(r => r.key === savedRecord.key);
-    if (idx >= 0) cachedRecords[idx] = savedRecord;
-    else cachedRecords.push(savedRecord);
+    // 立即从 API 获取最新数据（不走CDN，避免缓存问题）
+    cachedRecords = await apiGetRecordsFresh();
     renderAll(cachedRecords);
     document.getElementById('loadingOverlay').remove();
     const streak = calcStreak(targetName);
     showStreakPopup(targetName, streak);
-    // 延迟刷新一次，确保最终和服务器同步
-    setTimeout(() => fetchAndRender(), 3000);
   } catch (e) {
     document.getElementById('loadingOverlay').remove();
     console.error('打卡保存失败:', e);
@@ -729,7 +739,8 @@ function showStreakPopup(name, streak) {
 // ===== Table rendering =====
 async function fetchAndRender() {
   try {
-    cachedRecords = await apiGetRecords();
+    // 有 token 时从 API 直接读取（无CDN缓存），否则从 CDN 读取
+    cachedRecords = getToken() ? await apiGetRecordsFresh() : await apiGetRecords();
     document.getElementById('debugInfo').textContent = '✅ 数据已同步 · ' + cachedRecords.length + ' 条记录 · 用户: ' + (getCurrentUser() || '未设置') + (isAdmin() ? ' · 🔑 管理员' : '') + ' · 令牌: ' + (getToken() ? '已设置' : '未设置') + ' · ' + new Date().toLocaleTimeString();
   } catch (e) {
     console.error('获取数据失败:', e);
@@ -821,9 +832,9 @@ async function delRecord(name, day) {
   if (!getToken()) { alert('请先设置令牌'); return; }
   try {
     await apiDelete(name, day);
-    cachedRecords = cachedRecords.filter(r => r.key !== name + '_' + day);
+    // 立即从 API 获取最新数据（不走CDN）
+    cachedRecords = await apiGetRecordsFresh();
     renderAll(cachedRecords);
-    setTimeout(() => fetchAndRender(), 3000);
   } catch (e) {
     alert('删除失败: ' + e.message);
   }
