@@ -280,6 +280,21 @@
   .status-chip .streak-num {
     font-size: 10px; opacity: 0.8;
   }
+  /* ===== 欢迎回来汇总条 ===== */
+  .welcome-bar {
+    background: linear-gradient(135deg, #eff6ff, #dbeafe); border-radius: var(--radius);
+    padding: 10px 16px; margin-bottom: 12px; font-size: 13px;
+    color: #1e40af; display: flex; align-items: center; gap: 8px;
+    animation: slideDown .4s ease;
+  }
+  @keyframes slideDown {
+    from { opacity: 0; transform: translateY(-10px); }
+    to   { opacity: 1; transform: translateY(0); }
+  }
+  .welcome-bar .wb-close {
+    margin-left: auto; background: none; border: none; font-size: 16px;
+    color: #93c5fd; cursor: pointer; padding: 0 4px;
+  }
 
   /* ===== 通知弹条 ===== */
   .toast-container {
@@ -291,12 +306,13 @@
     background: linear-gradient(135deg, #4a6cf7, #6366f1);
     color: #fff; padding: 12px 18px; border-radius: 10px;
     font-size: 13px; box-shadow: 0 8px 24px rgba(74,108,247,0.3);
-    animation: toastIn .35s ease-out, toastOut .35s .35s ease-in forwards;
+    animation: toastIn .35s ease-out;
     pointer-events: auto; display: flex; align-items: center; gap: 8px;
     max-width: 320px;
+    transition: opacity .4s ease, transform .4s ease;
   }
   @keyframes toastIn { from { opacity: 0; transform: translateX(60px); } to { opacity: 1; transform: translateX(0); } }
-  @keyframes toastOut { from { opacity: 1; transform: translateX(0); } to { opacity: 0; transform: translateX(60px); } }
+  .toast.dismissing { opacity: 0; transform: translateX(60px); }
   .toast .toast-avatar {
     width: 28px; height: 28px; border-radius: 50%; background: rgba(255,255,255,0.25);
     display: flex; align-items: center; justify-content: center;
@@ -328,6 +344,7 @@
     <button class="btn-ai-batch" onclick="batchAIFeedback()" id="batchAiBtn" style="display:none">🤖 批量 AI 反馈</button>
   </div>
 
+  <div class="welcome-bar" id="welcomeBar" style="display:none"></div>
   <div class="status-bar" id="statusBar"></div>
 
   <div class="table-wrap"><table id="checkTable"></table></div>
@@ -1052,6 +1069,8 @@ async function submitCheckin() {
 // ===== Streak =====
 let cachedRecords = [];
 let sharedAIConfig = null; // 从 Gist 读取的共享 AI 配置
+let lastSeenTime = 0; // 内存中追踪最后看到的记录时间，用于轮询时检测新记录
+let isFirstLoad = true; // 是否首次加载（用于显示欢迎回来汇总）
 
 function calcStreak(name) {
   const days = cachedRecords
@@ -1120,6 +1139,7 @@ function showStreakPopup(name, streak) {
 // ===== Table rendering =====
 async function fetchAndRender() {
   try {
+    const prevRecords = cachedRecords;
     // 有 token 时从 API 直接读取（无CDN缓存），否则从 CDN 读取
     cachedRecords = getToken() ? await apiGetRecordsFresh() : await apiGetRecords();
     document.getElementById('debugInfo').textContent = '✅ 数据已同步 · ' + cachedRecords.length + ' 条记录 · 用户: ' + (getCurrentUser() || '未设置') + (isAdmin() ? ' · 🔑 管理员' : '') + ' · 令牌: ' + (getToken() ? '已设置' : '未设置') + ' · AI: ' + (getAIConfig().key ? '已配置' : '未配置') + ' · ' + new Date().toLocaleTimeString();
@@ -1144,7 +1164,42 @@ async function fetchAndRender() {
     cachedRecords = [];
     document.getElementById('debugInfo').textContent = '❌ 获取数据失败: ' + e.message + ' · 用户: ' + (getCurrentUser() || '未设置') + ' · 令牌: ' + (getToken() ? '已设置' : '未设置');
   }
+  
   renderAll(cachedRecords);
+  
+  // 检测新打卡（轮询时）
+  if (prevRecords && prevRecords.length > 0 && cachedRecords.length > 0) {
+    const prevKeys = new Set(prevRecords.map(r => r.key));
+    const newRecords = cachedRecords.filter(r => !prevKeys.has(r.key) && r.time > lastSeenTime);
+    if (newRecords.length > 0) {
+      for (const nr of newRecords) showToast(nr.name, nr.day);
+      lastSeenTime = Math.max(...newRecords.map(r => r.time));
+    }
+  }
+  
+  // 首次加载：显示「你离开期间」汇总
+  if (isFirstLoad) {
+    isFirstLoad = false;
+    const lastVisit = parseInt(localStorage.getItem('reading_checkin_last_visit') || '0');
+    if (lastVisit > 0 && cachedRecords.length > 0) {
+      const recentRecords = cachedRecords.filter(r => r.time > lastVisit);
+      if (recentRecords.length > 0) {
+        const names = [...new Set(recentRecords.map(r => r.name))];
+        const bar = document.getElementById('welcomeBar');
+        bar.style.display = 'flex';
+        bar.innerHTML = `
+          <span>👋 你离开期间，<strong>${names.length}</strong> 人完成了 <strong>${recentRecords.length}</strong> 次打卡</span>
+          <span style="font-size:11px;opacity:0.7;">${names.slice(0,5).join('、')}${names.length > 5 ? '...等' : ''}</span>
+          <button class="wb-close" onclick="this.parentElement.style.display='none'">✕</button>
+        `;
+        setTimeout(() => { bar.style.display = 'none'; }, 10000);
+      }
+    }
+    lastSeenTime = Date.now();
+  }
+  
+  // 更新最后访问时间
+  localStorage.setItem('reading_checkin_last_visit', Date.now());
 }
 
 // ===== 今日日期工具 =====
@@ -1206,14 +1261,15 @@ function showToast(name, day) {
   `;
   container.appendChild(toast);
 
-  // 3 秒后自动消失
+  // 8 秒后自动消失
   setTimeout(() => {
-    if (toast.parentNode) toast.remove();
-  }, 3500);
+    toast.classList.add('dismissing');
+    setTimeout(() => { if (toast.parentNode) toast.remove(); }, 400);
+  }, 8000);
   
-  // 最多保留 3 个通知
+  // 最多保留 5 个通知
   const toasts = container.querySelectorAll('.toast');
-  if (toasts.length > 3) toasts[0].remove();
+  if (toasts.length > 5) toasts[0].remove();
 }
 
 function renderAll(allRecords) {
