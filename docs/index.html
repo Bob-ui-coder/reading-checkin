@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<!-- v4.0 - 2026-07-16 20:45 UI重构：简洁高级 -->
+<!-- v4.1 - 2026-07-16 21:00 Tab标签页切换+批量AI修复 -->
 <html lang="zh-CN">
 <head>
 <meta charset="UTF-8">
@@ -96,9 +96,32 @@
     padding: 14px 20px; border-bottom: 1px solid var(--border-light);
   }
   .panel-title { font-size: 15px; font-weight: 600; color: var(--text); }
-  .panel-actions { display: flex; align-items: center; gap: 8px; }
-  .panel-actions label { font-size: 12px; color: var(--text-3); }
-  .panel-actions input[type="number"] {
+
+  /* ===== Tabs ===== */
+  .tab-bar { display: flex; gap: 2px; padding: 6px 12px 0; }
+  .tab {
+    padding: 10px 18px; border: none; background: none; cursor: pointer;
+    font-size: 14px; font-weight: 500; color: var(--text-3);
+    border-bottom: 2px solid transparent; transition: all .2s;
+    display: flex; align-items: center; gap: 6px; position: relative;
+  }
+  .tab:hover { color: var(--text-2); }
+  .tab.active { color: var(--primary); border-bottom-color: var(--primary); font-weight: 600; }
+  .tab-badge {
+    display: inline-flex; align-items: center; justify-content: center;
+    min-width: 18px; height: 18px; padding: 0 5px; border-radius: 9px;
+    font-size: 10px; font-weight: 700;
+  }
+  .tab-badge.alert { background: var(--red); color: #fff; }
+  .tab-badge.info { background: var(--primary-light); color: var(--primary); }
+  .tab-content { display: none; }
+  .tab-content.active { display: block; }
+  .table-toolbar {
+    display: flex; align-items: center; gap: 12px;
+    padding: 10px 20px; border-bottom: 1px solid var(--border-light);
+  }
+  .table-toolbar label { font-size: 12px; color: var(--text-3); }
+  .table-toolbar input[type="number"] {
     width: 48px; padding: 4px 6px; border: 1px solid var(--border); border-radius: 6px;
     font-size: 13px; text-align: center;
   }
@@ -330,22 +353,27 @@
   </section>
 
   <section class="panel">
-    <div class="panel-header">
-      <span class="panel-title">打卡进度</span>
-      <div class="panel-actions">
+    <div class="tab-bar">
+      <button class="tab active" id="tabFeed" onclick="switchTab('feed')">
+        📊 打卡动态
+      </button>
+      <button class="tab" id="tabTable" onclick="switchTab('table')">
+        📋 打卡进度 <span class="tab-badge alert" id="tableBadge" style="display:none"></span>
+      </button>
+    </div>
+    <div class="tab-content active" id="feedTab">
+      <div class="feed" id="feed"></div>
+      <div class="empty-feed" id="emptyFeed">还没有打卡记录，点击「打卡进度」标签开始打卡吧 ~</div>
+    </div>
+    <div class="tab-content" id="tableTab">
+      <div class="table-toolbar">
         <label>天数</label>
         <input type="number" id="dayCount" value="7" min="1" max="31">
         <button class="btn-ai-batch" onclick="batchAIFeedback()" id="batchAiBtn" style="display:none">🤖 批量 AI 反馈</button>
       </div>
+      <div class="table-wrap"><table id="checkTable"></table></div>
+      <div class="summary" id="summary"></div>
     </div>
-    <div class="table-wrap"><table id="checkTable"></table></div>
-    <div class="summary" id="summary"></div>
-  </section>
-
-  <section class="panel">
-    <div class="panel-header"><span class="panel-title">打卡动态</span></div>
-    <div class="feed" id="feed"></div>
-    <div class="empty-feed" id="emptyFeed">还没有打卡记录，点击表格格子开始吧 ~</div>
   </section>
 
   <div class="toast-container" id="toastContainer"></div>
@@ -866,7 +894,14 @@ async function batchAIFeedback() {
 
   if (!confirm(`还有 ${pending.length} 条记录没有 AI 反馈，是否批量生成？（可能需要一些时间）`)) return;
 
+  let success = 0;
+  let fail = 0;
   let firstError = '';
+
+  // 先获取最新数据
+  let allRecords = await apiGetRecordsFresh();
+  const recordMap = {};
+  allRecords.forEach(r => { recordMap[r.key] = r; });
 
   for (const rec of pending) {
     try {
@@ -888,17 +923,7 @@ async function batchAIFeedback() {
     }
   }
 
-  // 处理完所有后再获取一次最新数据并合并
-  allRecords = await apiGetRecordsFresh();
-  for (const rec of pending) {
-    if (rec.feedback) {
-      const idx = allRecords.findIndex(r => r.key === rec.key);
-      if (idx >= 0) {
-        allRecords[idx].feedback = rec.feedback;
-        allRecords[idx].feedbackTime = rec.feedbackTime;
-      }
-    }
-  }
+  // 保存到 Gist
   await apiSaveRecords(allRecords, 'replace');
   cachedRecords = allRecords;
   renderAll(cachedRecords);
@@ -1355,6 +1380,18 @@ function showToast(name, day) {
   if (toasts.length > 5) toasts[0].remove();
 }
 
+function switchTab(tab) {
+  document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+  document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
+  if (tab === 'feed') {
+    document.getElementById('tabFeed').classList.add('active');
+    document.getElementById('feedTab').classList.add('active');
+  } else {
+    document.getElementById('tabTable').classList.add('active');
+    document.getElementById('tableTab').classList.add('active');
+  }
+}
+
 function renderAll(allRecords) {
   const days = parseInt(document.getElementById('dayCount').value) || 7;
   const recordMap = {};
@@ -1398,6 +1435,19 @@ function renderAll(allRecords) {
   renderFeed(allRecords);
   renderStatusBar(allRecords);
   renderGroupRanking(allRecords);
+
+  // 更新「打卡进度」Tab 上的未打卡人数徽章
+  const todayChecked = getTodayCheckedIn(allRecords);
+  const allMembers = [];
+  groups.forEach(g => g.members.forEach(m => allMembers.push(m)));
+  const uncheckedCount = allMembers.filter(m => !todayChecked.has(m)).length;
+  const badge = document.getElementById('tableBadge');
+  if (badge && uncheckedCount > 0) {
+    badge.style.display = '';
+    badge.textContent = uncheckedCount + '人未打卡';
+  } else if (badge) {
+    badge.style.display = 'none';
+  }
 }
 
 function renderFeed(records) {
@@ -1500,6 +1550,8 @@ function escapeHtml(s) {
 // ===== 初始化 =====
 updateTokenBanner();
 fetchAndRender();
+// 天数改变时立即重渲染
+document.getElementById('dayCount').addEventListener('change', () => renderAll(cachedRecords));
 // 每60秒自动刷新（降低频率避免CDN缓存问题）
 setInterval(fetchAndRender, 60000);
 
