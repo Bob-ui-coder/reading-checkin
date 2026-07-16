@@ -246,6 +246,64 @@
     margin-left: 8px; transition: all .2s;
   }
   .btn-ai-batch:hover { background: #fde68a; }
+
+  /* ===== 今日状态一览条 ===== */
+  .status-bar {
+    background: #fff; border-radius: var(--radius); padding: 12px 16px;
+    box-shadow: 0 1px 8px rgba(0,0,0,0.05); margin-bottom: 16px;
+    display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+  }
+  .status-bar .status-label {
+    font-size: 12px; color: #888; font-weight: 600; white-space: nowrap;
+    margin-right: 2px;
+  }
+  .status-bar .status-count {
+    font-size: 16px; font-weight: 700; color: var(--blue); margin-right: 10px;
+    white-space: nowrap;
+  }
+  .status-bar .status-count .done { color: var(--green); }
+  .status-chip {
+    display: inline-flex; align-items: center; gap: 3px;
+    padding: 4px 10px; border-radius: 14px; font-size: 12px;
+    white-space: nowrap; transition: all .2s;
+  }
+  .status-chip.done {
+    background: #d1fae5; color: #065f46; font-weight: 600;
+  }
+  .status-chip.undone {
+    background: #f3f4f6; color: #bbb;
+  }
+  .status-chip.leader {
+    border: 1px solid #ef4444;
+  }
+  .status-chip .streak-num {
+    font-size: 10px; opacity: 0.8;
+  }
+
+  /* ===== 通知弹条 ===== */
+  .toast-container {
+    position: fixed; top: 16px; right: 16px; z-index: 2000;
+    display: flex; flex-direction: column; gap: 8px;
+    pointer-events: none;
+  }
+  .toast {
+    background: linear-gradient(135deg, #4a6cf7, #6366f1);
+    color: #fff; padding: 12px 18px; border-radius: 10px;
+    font-size: 13px; box-shadow: 0 8px 24px rgba(74,108,247,0.3);
+    animation: toastIn .35s ease-out, toastOut .35s .35s ease-in forwards;
+    pointer-events: auto; display: flex; align-items: center; gap: 8px;
+    max-width: 320px;
+  }
+  @keyframes toastIn { from { opacity: 0; transform: translateX(60px); } to { opacity: 1; transform: translateX(0); } }
+  @keyframes toastOut { from { opacity: 1; transform: translateX(0); } to { opacity: 0; transform: translateX(60px); } }
+  .toast .toast-avatar {
+    width: 28px; height: 28px; border-radius: 50%; background: rgba(255,255,255,0.25);
+    display: flex; align-items: center; justify-content: center;
+    font-size: 13px; font-weight: 600; flex-shrink: 0;
+  }
+  .toast .toast-body { flex: 1; min-width: 0; }
+  .toast .toast-name { font-weight: 600; }
+  .toast .toast-day { font-size: 11px; opacity: 0.8; }
 </style>
 </head>
 <body>
@@ -269,12 +327,16 @@
     <button class="btn-ai-batch" onclick="batchAIFeedback()" id="batchAiBtn" style="display:none">🤖 批量 AI 反馈</button>
   </div>
 
+  <div class="status-bar" id="statusBar"></div>
+
   <div class="table-wrap"><table id="checkTable"></table></div>
   <div class="summary" id="summary"></div>
 
   <div class="section-title">📝 打卡动态</div>
   <div class="feed" id="feed"></div>
   <div class="empty-feed" id="emptyFeed">还没有打卡记录，点击表格格子开始吧 ~</div>
+
+  <div class="toast-container" id="toastContainer"></div>
 
   <div class="footer">📖 读书打卡 · 数据通过 GitHub 云端共享 · v2</div>
   <div id="debugInfo" style="text-align:center;font-size:11px;color:#bbb;padding:8px;margin-top:4px"></div>
@@ -978,6 +1040,7 @@ async function submitCheckin() {
     document.getElementById('loadingOverlay').remove();
     const streak = calcStreak(targetName);
     showStreakPopup(targetName, streak);
+    showToast(targetName, targetDay);
   } catch (e) {
     document.getElementById('loadingOverlay').remove();
     console.error('打卡保存失败:', e);
@@ -1083,6 +1146,75 @@ async function fetchAndRender() {
   renderAll(cachedRecords);
 }
 
+// ===== 今日日期工具 =====
+function getTodayStr() {
+  const now = new Date();
+  return now.getFullYear() + '-' + String(now.getMonth() + 1).padStart(2, '0') + '-' + String(now.getDate()).padStart(2, '0');
+}
+
+// 从记录中获取今天打卡的人名 Set
+function getTodayCheckedIn(records) {
+  const today = getTodayStr();
+  const set = new Set();
+  records.forEach(r => {
+    const d = new Date(r.time);
+    const ds = d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
+    if (ds === today) set.add(r.name);
+  });
+  return set;
+}
+
+// ===== 打卡状态一览条 =====
+function renderStatusBar(records) {
+  const bar = document.getElementById('statusBar');
+  const todayChecked = getTodayCheckedIn(records);
+  const allMembers = [];
+  groups.forEach(g => g.members.forEach(m => allMembers.push(m)));
+  const checkedCount = allMembers.filter(m => todayChecked.has(m)).length;
+  const total = allMembers.length;
+
+  let chips = '';
+  allMembers.forEach(name => {
+    const done = todayChecked.has(name);
+    const streak = calcStreak(name);
+    const leaderCls = LEADERS.has(name) ? ' leader' : '';
+    const streakBadge = done && streak > 1 ? `<span class="streak-num">🔥${streak}</span>` : '';
+    chips += `<span class="status-chip ${done ? 'done' : 'undone'}${leaderCls}">${name}${streakBadge}</span>`;
+  });
+
+  bar.innerHTML = `
+    <span class="status-label">📊 今日打卡</span>
+    <span class="status-count"><span class="done">${checkedCount}</span>/${total}</span>
+    ${chips}
+  `;
+}
+
+// ===== 打卡通知弹条 =====
+let toastTimer = null;
+function showToast(name, day) {
+  const container = document.getElementById('toastContainer');
+  const initial = name.charAt(0).toUpperCase();
+  const toast = document.createElement('div');
+  toast.className = 'toast';
+  toast.innerHTML = `
+    <div class="toast-avatar">${initial}</div>
+    <div class="toast-body">
+      <div class="toast-name">${escapeHtml(name)}</div>
+      <div class="toast-day">刚完成了 Day ${day} 打卡 🎉</div>
+    </div>
+  `;
+  container.appendChild(toast);
+
+  // 3 秒后自动消失
+  setTimeout(() => {
+    if (toast.parentNode) toast.remove();
+  }, 3500);
+  
+  // 最多保留 3 个通知
+  const toasts = container.querySelectorAll('.toast');
+  if (toasts.length > 3) toasts[0].remove();
+}
+
 function renderAll(allRecords) {
   const days = parseInt(document.getElementById('dayCount').value) || 7;
   const recordMap = {};
@@ -1120,6 +1252,7 @@ function renderAll(allRecords) {
 
   document.getElementById('summary').textContent = `共 ${allRecords.length} 人次已打卡`;
   renderFeed(allRecords);
+  renderStatusBar(allRecords);
 }
 
 function renderFeed(records) {
