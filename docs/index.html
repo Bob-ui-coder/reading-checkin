@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<!-- v3.1 - 2026-07-16 15:30 状态栏+通知 -->
+<!-- v3.2 - 2026-07-16 16:00 连续天数+完成率排行 -->
 <html lang="zh-CN">
 <head>
 <meta charset="UTF-8">
@@ -55,9 +55,14 @@
   table { width: 100%; border-collapse: collapse; min-width: 700px; }
   th, td { padding: 8px 4px; text-align: center; font-size: 13px; border-bottom: 1px solid #eee; }
   th { background: var(--blue); color: #fff; font-weight: 500; white-space: nowrap; }
-  .col-name { text-align: left; padding-left: 14px; width: 85px; white-space: nowrap; }
+  .col-name { text-align: left; padding-left: 10px; width: 105px; white-space: nowrap; }
   .col-name.leader { color: #dc2626; font-weight: 700; }
-  th.col-name { text-align: left; padding-left: 14px; }
+  th.col-name { text-align: left; padding-left: 10px; }
+  .col-name .streak-badge {
+    font-size: 10px; font-weight: 500; margin-left: 2px;
+  }
+  .col-name .streak-badge.active { color: #f59e0b; }
+  .col-name .streak-badge.zero { color: #d5d5d5; }
 
   .group-header td {
     background: #eef1ff; font-weight: 700; font-size: 14px; color: var(--blue);
@@ -280,6 +285,43 @@
   .status-chip .streak-num {
     font-size: 10px; opacity: 0.8;
   }
+  /* ===== 小组今日完成率排行 ===== */
+  .group-ranking {
+    background: #fff; border-radius: var(--radius); padding: 14px 16px;
+    box-shadow: 0 1px 8px rgba(0,0,0,0.05); margin-bottom: 16px;
+  }
+  .group-ranking .gr-title {
+    font-size: 13px; font-weight: 600; color: #555; margin-bottom: 10px;
+    display: flex; align-items: center; gap: 6px;
+  }
+  .group-ranking .gr-list {
+    display: flex; gap: 12px; flex-wrap: wrap;
+  }
+  .group-ranking .gr-item {
+    display: flex; align-items: center; gap: 8px;
+    flex: 1; min-width: 190px; max-width: 230px;
+    padding: 8px 12px; border-radius: 10px;
+    background: #fafafa; transition: transform .15s;
+  }
+  .group-ranking .gr-item:hover { transform: translateY(-1px); }
+  .group-ranking .gr-rank {
+    font-size: 16px; width: 28px; text-align: center; flex-shrink: 0;
+  }
+  .group-ranking .gr-info { flex: 1; min-width: 0; }
+  .group-ranking .gr-name { font-size: 13px; font-weight: 600; color: #333; margin-bottom: 2px; }
+  .group-ranking .gr-bar-wrap {
+    height: 6px; background: #eee; border-radius: 3px; overflow: hidden; margin-bottom: 2px;
+  }
+  .group-ranking .gr-bar {
+    height: 100%; border-radius: 3px; transition: width .6s ease;
+  }
+  .group-ranking .gr-bar.high { background: #10b981; }
+  .group-ranking .gr-bar.mid { background: #f59e0b; }
+  .group-ranking .gr-bar.low { background: #ef4444; }
+  .group-ranking .gr-stat {
+    font-size: 11px; color: #888;
+  }
+  .group-ranking .gr-stat strong { color: #333; }
   /* ===== 欢迎回来汇总条 ===== */
   .welcome-bar {
     background: linear-gradient(135deg, #eff6ff, #dbeafe); border-radius: var(--radius);
@@ -346,6 +388,7 @@
 
   <div class="welcome-bar" id="welcomeBar" style="display:none"></div>
   <div class="status-bar" id="statusBar"></div>
+  <div class="group-ranking" id="groupRanking"></div>
 
   <div class="table-wrap"><table id="checkTable"></table></div>
   <div class="summary" id="summary"></div>
@@ -1234,7 +1277,7 @@ function renderStatusBar(records) {
     const done = todayChecked.has(name);
     const streak = calcStreak(name);
     const leaderCls = LEADERS.has(name) ? ' leader' : '';
-    const streakBadge = done && streak > 1 ? `<span class="streak-num">🔥${streak}</span>` : '';
+    const streakBadge = streak > 0 ? `<span class="streak-num">🔥${streak}</span>` : '';
     chips += `<span class="status-chip ${done ? 'done' : 'undone'}${leaderCls}">${name}${streakBadge}</span>`;
   });
 
@@ -1242,6 +1285,47 @@ function renderStatusBar(records) {
     <span class="status-label">📊 今日打卡</span>
     <span class="status-count"><span class="done">${checkedCount}</span>/${total}</span>
     ${chips}
+  `;
+}
+
+// ===== 小组今日完成率排行 =====
+function renderGroupRanking(records) {
+  const container = document.getElementById('groupRanking');
+  const todayChecked = getTodayCheckedIn(records);
+  
+  const groupStats = groups.map(g => {
+    const checked = g.members.filter(m => todayChecked.has(m)).length;
+    const total = g.members.length;
+    const rate = total > 0 ? checked / total : 0;
+    return { name: g.name, checked, total, rate };
+  }).sort((a, b) => b.rate - a.rate);
+  
+  const rankEmojis = ['🥇', '🥈', '🥉', '4️⃣', '5️⃣'];
+  
+  container.innerHTML = `
+    <div class="gr-title">🏆 小组今日完成率排行</div>
+    <div class="gr-list">
+      ${groupStats.map((gs, i) => {
+        const pct = Math.round(gs.rate * 100);
+        const barCls = pct >= 80 ? 'high' : pct >= 40 ? 'mid' : 'low';
+        let rankDisplay = rankEmojis[i] || (i + 1);
+        // 如果完成率相同，用相同排名标记
+        if (i > 0 && gs.rate === groupStats[i-1].rate) {
+          rankDisplay = rankEmojis[i-1] || (i);
+        }
+        return `
+          <div class="gr-item">
+            <div class="gr-rank">${rankDisplay}</div>
+            <div class="gr-info">
+              <div class="gr-name">${gs.name}</div>
+              <div class="gr-bar-wrap">
+                <div class="gr-bar ${barCls}" style="width:${pct}%"></div>
+              </div>
+              <div class="gr-stat"><strong>${gs.checked}/${gs.total}</strong> · ${pct}%</div>
+            </div>
+          </div>`;
+      }).join('')}
+    </div>
   `;
 }
 
@@ -1285,8 +1369,12 @@ function renderAll(allRecords) {
   groups.forEach(group => {
     html += `<tr class="group-header"><td colspan="${days + 1}">${group.name}</td></tr>`;
     group.members.forEach(name => {
+      const streak = calcStreak(name);
+      const streakHtml = streak > 0
+        ? `<span class="streak-badge active">🔥${streak}</span>`
+        : `<span class="streak-badge zero">🔥0</span>`;
       html += '<tr>';
-      html += `<td class="col-name${LEADERS.has(name) ? ' leader' : ''}">${name}</td>`;
+      html += `<td class="col-name${LEADERS.has(name) ? ' leader' : ''}">${name}${streakHtml}</td>`;
       for (let d = 1; d <= days; d++) {
         const key = `${name}_${d}`;
         const rec = recordMap[key];
@@ -1310,6 +1398,7 @@ function renderAll(allRecords) {
   document.getElementById('summary').textContent = `共 ${allRecords.length} 人次已打卡`;
   renderFeed(allRecords);
   renderStatusBar(allRecords);
+  renderGroupRanking(allRecords);
 }
 
 function renderFeed(records) {
@@ -1325,6 +1414,8 @@ function renderFeed(records) {
 
   feedEl.innerHTML = records.map(r => {
     const initial = r.name.charAt(0).toUpperCase();
+    const streak = calcStreak(r.name);
+    const streakMeta = streak > 0 ? ` 🔥${streak}` : '';
     const dateStr = new Date(r.time).toLocaleString('zh-CN', {
       month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit'
     });
@@ -1353,7 +1444,7 @@ function renderFeed(records) {
       <div class="card">
         <div class="avatar">${initial}</div>
         <div class="body">
-          <div class="meta"><strong>${escapeHtml(r.name)}</strong> · Day ${r.day} · ${dateStr}</div>
+          <div class="meta"><strong>${escapeHtml(r.name)}</strong>${streakMeta} · Day ${r.day} · ${dateStr}</div>
           ${r.text ? `<div class="text">${escapeHtml(r.text)}</div>` : ''}
           ${r.image ? `<div class="img-row"><img src="${r.image}" onclick="openLightbox(this.src)" loading="lazy"></div>` : ''}
           ${feedbackHtml}
