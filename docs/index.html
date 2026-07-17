@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<!-- v4.2 - 2026-07-17 修复大文件 API 截断导致 JSON 解析失败 -->
+<!-- v4.3 - 2026-07-17 修复保存路径截断导致数据丢失 + 增强图片压缩 -->
 <html lang="zh-CN">
 <head>
 <meta charset="UTF-8">
@@ -603,21 +603,18 @@ async function apiGetRecords() {
   return data.records || [];
 }
 
-// 从 Gist API 直接读取（实时无缓存，需要 token）
-// 大文件会被截断，需要 fallback 到 raw URL 获取完整内容
-async function apiGetRecordsFresh() {
-  const token = getToken();
-  if (!token) return await apiGetRecords();
+// 统一：从 Gist 读取完整数据（处理大文件截断）
+// Gist API 对超过 1MB 的文件返回 truncated:true，需要 fallback 到 raw URL
+async function readFullGistData(token) {
   const res = await fetch(GIST_API_URL, {
     headers: { 'Authorization': 'Bearer ' + token }
   });
-  if (!res.ok) throw new Error('获取数据失败: ' + res.status);
+  if (!res.ok) throw new Error('获取Gist失败: ' + res.status);
   const gist = await res.json();
   const file = gist.files['data.json'];
 
   let content;
   if (file && file.truncated) {
-    // 大文件被截断：用 raw URL 取完整内容
     const rawRes = await fetch((file.raw_url || GIST_RAW_URL) + '?t=' + Date.now());
     if (!rawRes.ok) throw new Error('获取完整数据失败: ' + rawRes.status);
     content = await rawRes.text();
@@ -626,18 +623,23 @@ async function apiGetRecordsFresh() {
   }
 
   try {
-    const data = JSON.parse(content);
-    if (data.aiConfig) sharedAIConfig = data.aiConfig;
-    return data.records || [];
+    return JSON.parse(content);
   } catch (parseErr) {
-    // 解析失败：兜底尝试 raw URL
+    // API 内容解析失败，兜底用 raw URL
     const rawRes = await fetch(GIST_RAW_URL + '?t=' + Date.now());
     if (!rawRes.ok) throw new Error('获取数据失败: ' + rawRes.status);
     const text = await rawRes.text();
-    const data = JSON.parse(text);
-    if (data.aiConfig) sharedAIConfig = data.aiConfig;
-    return data.records || [];
+    return JSON.parse(text);
   }
+}
+
+// 从 Gist API 直接读取（实时无缓存，需要 token）
+async function apiGetRecordsFresh() {
+  const token = getToken();
+  if (!token) return await apiGetRecords();
+  const data = await readFullGistData(token);
+  if (data.aiConfig) sharedAIConfig = data.aiConfig;
+  return data.records || [];
 }
 
 // 构建 Gist 数据（保留共享 AI 配置）
@@ -650,15 +652,8 @@ function buildGistContent(records) {
 // 从 Gist 读取 aiConfig（不依赖全局变量，用于 save 时获取最新值）
 async function fetchAIConfigFromGist(token) {
   try {
-    const getRes = await fetch(GIST_API_URL, {
-      headers: { 'Authorization': 'Bearer ' + token }
-    });
-    if (getRes.ok) {
-      const gist = await getRes.json();
-      const content = gist.files['data.json']?.content || '{}';
-      const data = JSON.parse(content);
-      return data.aiConfig || null;
-    }
+    const data = await readFullGistData(token);
+    return data.aiConfig || null;
   } catch (e) { /* ignore */ }
   return sharedAIConfig;
 }
@@ -692,25 +687,13 @@ async function apiSaveRecords(records, mode) {
     return records;
   }
 
-  // 合并模式
+  // 合并模式：读取完整数据（处理大文件截断），合并后保存
   for (let attempt = 0; attempt < 3; attempt++) {
     try {
-      const getRes = await fetch(GIST_API_URL, {
-        headers: { 'Authorization': 'Bearer ' + token }
-      });
-      if (!getRes.ok) {
-        const err = await getRes.json();
-        throw new Error(err.message || '获取Gist失败');
-      }
-      const gist = await getRes.json();
-
-      let existingRecords = [];
-      try {
-        const existingContent = gist.files['data.json']?.content || '{"records":[]}';
-        const existingData = JSON.parse(existingContent);
-        existingRecords = existingData.records || [];
-        if (existingData.aiConfig) sharedAIConfig = existingData.aiConfig;
-      } catch (e) { /* ignore */ }
+      // 使用 readFullGistData 处理大文件截断
+      const existingData = await readFullGistData(token);
+      let existingRecords = existingData.records || [];
+      if (existingData.aiConfig) sharedAIConfig = existingData.aiConfig;
 
       const newKeys = new Set(records.map(r => r.key));
       const merged = [...records];
@@ -1080,7 +1063,7 @@ async function previewFile(input) {
   const reader = new FileReader();
   reader.onload = async () => {
     // 压缩图片
-    pendingImage = await compressImage(reader.result, 800, 0.6);
+    pendingImage = await compressImage(reader.result, 600, 0.5);
     document.getElementById('previewThumb').src = pendingImage;
     document.getElementById('previewThumb').style.display = 'block';
   };
