@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<!-- v4.3 - 2026-07-17 修复保存路径截断导致数据丢失 + 增强图片压缩 -->
+<!-- v4.4 - 2026-07-17 强制 SW 更新+数据加载多重 fallback+错误重试 -->
 <html lang="zh-CN">
 <head>
 <meta charset="UTF-8">
@@ -85,6 +85,25 @@
   .ai-banner.ok .set-btn { background: var(--green); }
   .token-banner .set-btn:hover, .ai-banner .set-btn:hover { opacity: .85; }
   .token-banner.hidden, .ai-banner.hidden { display: none; }
+
+  /* ===== 错误提示条 ===== */
+  .error-banner {
+    border-radius: var(--radius-sm); padding: 14px 16px; margin-bottom: 12px;
+    font-size: 13px; display: none; align-items: center; justify-content: space-between; gap: 12px;
+    background: #fef2f2; border: 1px solid #fecaca; color: #991b1b;
+  }
+  .error-banner .err-msg { flex: 1; }
+  .error-banner .retry-btn {
+    border: none; padding: 8px 18px; border-radius: 8px; cursor: pointer;
+    font-size: 13px; font-weight: 500; white-space: nowrap;
+    background: #ef4444; color: #fff;
+  }
+  .error-banner .retry-btn:hover { background: #dc2626; }
+  .error-banner .force-btn {
+    border: 1px solid #fca5a5; padding: 7px 14px; border-radius: 8px; cursor: pointer;
+    font-size: 12px; white-space: nowrap; background: #fff; color: #991b1b;
+  }
+  .error-banner .force-btn:hover { background: #fef2f2; }
 
   /* ===== 面板 ===== */
   .panel {
@@ -340,6 +359,11 @@
     <span>⚠️ 还未设置打卡令牌，打卡功能需要先设置令牌才能保存数据</span>
     <button class="set-btn" onclick="openSettings()">设置令牌</button>
   </div>
+  <div class="error-banner" id="errorBanner">
+    <span class="err-msg">数据加载失败</span>
+    <button class="force-btn" onclick="forceReload()">🔄 强制刷新</button>
+    <button class="retry-btn" onclick="fetchAndRender()">重试</button>
+  </div>
   <div class="ai-banner" id="aiBanner">
     <span>🤖 AI 反馈未配置：管理员请设置共享 AI Key，或普通成员可在设置中输入自己的 Key</span>
     <button class="set-btn" onclick="openSettings()">配置 AI</button>
@@ -377,7 +401,7 @@
   </section>
 
   <div class="toast-container" id="toastContainer"></div>
-  <div class="footer">📖 读书打卡 · 数据通过 GitHub 云端共享</div>
+  <div class="footer">📖 读书打卡 <span style="color:#cbd5e1">·</span> v4.4 <span style="color:#cbd5e1">·</span> 数据通过 GitHub 云端共享</div>
   <div id="debugInfo"></div>
 </div>
 
@@ -594,13 +618,42 @@ async function saveSharedAIConfigToGist() {
 }
 
 // ===== Gist API =====
-// 从 CDN 读取（可能有缓存延迟，但不需 token）
+// 从 CDN 读取（多重 fallback，不需要 token）
 async function apiGetRecords() {
-  const res = await fetch(GIST_RAW_URL + '?t=' + Date.now());
-  if (!res.ok) throw new Error('获取数据失败: ' + res.status);
-  const data = await res.json();
-  if (data.aiConfig) sharedAIConfig = data.aiConfig;
-  return data.records || [];
+  // 策略1：GitHub raw URL（带时间戳防缓存）
+  try {
+    const res = await fetch(GIST_RAW_URL + '?t=' + Date.now(), { cache: 'no-store' });
+    if (res.ok) {
+      const data = await res.json();
+      if (data.aiConfig) sharedAIConfig = data.aiConfig;
+      return data.records || [];
+    }
+  } catch (e) {
+    console.warn('CDN raw 读取失败:', e.message);
+  }
+  
+  // 策略2：Gist API（无需 auth，公开 Gist 可读取，处理大文件截断）
+  try {
+    const res = await fetch(GIST_API_URL, { cache: 'no-store' });
+    if (res.ok) {
+      const gist = await res.json();
+      const file = gist.files?.['data.json'];
+      let content;
+      if (file?.truncated) {
+        const rawRes = await fetch((file.raw_url || GIST_RAW_URL) + '?t=' + Date.now(), { cache: 'no-store' });
+        content = await rawRes.text();
+      } else {
+        content = file?.content || '{"records":[]}';
+      }
+      const data = JSON.parse(content);
+      if (data.aiConfig) sharedAIConfig = data.aiConfig;
+      return data.records || [];
+    }
+  } catch (e) {
+    console.warn('Gist API 无 auth 读取失败:', e.message);
+  }
+  
+  throw new Error('所有数据源均无法访问，请检查网络或点击「强制刷新」');
 }
 
 // 统一：从 Gist 读取完整数据（处理大文件截断）
@@ -1209,12 +1262,44 @@ function showStreakPopup(name, streak) {
 }
 
 // ===== Table rendering =====
+const PAGE_VERSION = 'v4.4';
 async function fetchAndRender() {
   try {
     const prevRecords = cachedRecords;
-    // 有 token 时从 API 直接读取（无CDN缓存），否则从 CDN 读取
-    cachedRecords = getToken() ? await apiGetRecordsFresh() : await apiGetRecords();
-    document.getElementById('debugInfo').textContent = '✅ 数据已同步 · ' + cachedRecords.length + ' 条记录 · 用户: ' + (getCurrentUser() || '未设置') + (isAdmin() ? ' · 🔑 管理员' : '') + ' · 令牌: ' + (getToken() ? '已设置' : '未设置') + ' · AI: ' + (getAIConfig().key ? '已配置' : '未配置') + ' · ' + new Date().toLocaleTimeString();
+    
+    // 多重 fallback 策略：API → CDN → CDN备用 → localStorage
+    let records = null;
+    let dataSource = '';
+    
+    if (getToken()) {
+      // 策略1：从 Gist API 读取（实时无缓存）
+      try {
+        records = await apiGetRecordsFresh();
+        dataSource = 'API';
+      } catch (apiErr) {
+        console.warn('API 读取失败，尝试 CDN:', apiErr.message);
+        // 策略2：fallback 到 CDN
+        try {
+          records = await apiGetRecords();
+          dataSource = 'CDN(降级)';
+        } catch (cdnErr) {
+          console.warn('CDN 读取也失败:', cdnErr.message);
+          throw cdnErr;
+        }
+      }
+    } else {
+      // 无 token：直接从 CDN 读取
+      records = await apiGetRecords();
+      dataSource = 'CDN';
+    }
+    
+    cachedRecords = records || [];
+    
+    // 隐藏错误提示
+    const errBanner = document.getElementById('errorBanner');
+    if (errBanner) errBanner.style.display = 'none';
+    
+    document.getElementById('debugInfo').innerHTML = '✅ ' + PAGE_VERSION + ' · ' + dataSource + ' · ' + cachedRecords.length + ' 条 · ' + (getCurrentUser() || '未设置') + (isAdmin() ? ' · 🔑管理员' : '') + ' · ' + new Date().toLocaleTimeString();
     
     // 显示/隐藏批量AI按钮
     const aiConfig = getAIConfig();
@@ -1234,7 +1319,15 @@ async function fetchAndRender() {
   } catch (e) {
     console.error('获取数据失败:', e);
     cachedRecords = [];
-    document.getElementById('debugInfo').textContent = '❌ 获取数据失败: ' + e.message + ' · 用户: ' + (getCurrentUser() || '未设置') + ' · 令牌: ' + (getToken() ? '已设置' : '未设置');
+    
+    // 显示明显的错误提示+重试按钮
+    const errBanner = document.getElementById('errorBanner');
+    if (errBanner) {
+      errBanner.style.display = 'flex';
+      errBanner.querySelector('.err-msg').textContent = '数据加载失败：' + e.message;
+    }
+    
+    document.getElementById('debugInfo').innerHTML = '❌ ' + PAGE_VERSION + ' · 获取失败: ' + e.message + ' · 令牌: ' + (getToken() ? '已设置' : '未设置');
   }
   
   renderAll(cachedRecords);
@@ -1552,17 +1645,91 @@ function escapeHtml(s) {
   return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
 }
 
+// ===== 强制刷新（清除 SW 缓存后重载）=====
+async function forceReload() {
+  // 注销所有 Service Worker
+  if ('serviceWorker' in navigator) {
+    try {
+      const regs = await navigator.serviceWorker.getRegistrations();
+      await Promise.all(regs.map(r => r.unregister()));
+      console.log('All service workers unregistered');
+    } catch (e) {
+      console.warn('SW unregister failed:', e);
+    }
+  }
+  // 清除所有缓存
+  if ('caches' in window) {
+    try {
+      const keys = await caches.keys();
+      await Promise.all(keys.map(k => caches.delete(k)));
+      console.log('All caches cleared');
+    } catch (e) {
+      console.warn('Cache clear failed:', e);
+    }
+  }
+  // 强制重载（绕过缓存）
+  window.location.href = window.location.pathname + '?t=' + Date.now();
+}
+
 // ===== 初始化 =====
 updateTokenBanner();
-fetchAndRender();
+// 首次加载，失败后自动重试一次
+fetchAndRender().catch(() => {
+  setTimeout(() => fetchAndRender(), 2000);
+});
+// 如果首次加载后数据为空，3秒后自动重试
+setTimeout(() => {
+  if (cachedRecords.length === 0) {
+    console.log('数据为空，自动重试...');
+    fetchAndRender();
+  }
+}, 3000);
 // 天数改变时立即重渲染
 document.getElementById('dayCount').addEventListener('change', () => renderAll(cachedRecords));
 // 每60秒自动刷新（降低频率避免CDN缓存问题）
 setInterval(fetchAndRender, 60000);
 
-// ===== Service Worker 离线缓存 =====
+// ===== Service Worker 离线缓存（带强制更新检测）=====
 if ('serviceWorker' in navigator) {
-  navigator.serviceWorker.register('./sw.js').catch(() => {});
+  navigator.serviceWorker.register('./sw.js').then(reg => {
+    // 检测 SW 更新
+    reg.addEventListener('updatefound', () => {
+      const newSW = reg.installing;
+      if (newSW) {
+        newSW.addEventListener('statechange', () => {
+          if (newSW.state === 'activated') {
+            // 新 SW 已激活，强制重载页面以加载最新代码
+            console.log('SW updated, reloading page...');
+            window.location.reload();
+          }
+        });
+      }
+    });
+    // 如果有等待中的 SW，直接激活它
+    if (reg.waiting) {
+      reg.waiting.postMessage('SKIP_WAITING');
+    }
+  }).catch(e => {
+    // SW 注册失败时注销旧 SW
+    console.warn('SW registration failed, unregistering:', e);
+    navigator.serviceWorker.getRegistrations().then(regs => {
+      regs.forEach(r => r.unregister());
+    });
+  });
+  
+  // 监听来自 SW 的消息
+  navigator.serviceWorker.addEventListener('message', event => {
+    if (event.data === 'SKIP_WAITING') {
+      // 通知等待中的 SW 直接跳过等待
+    }
+  });
+  
+  // 页面加载时检查是否有旧的 SW 需要清理
+  navigator.serviceWorker.getRegistrations().then(regs => {
+    regs.forEach(reg => {
+      reg.update().catch(() => {});
+    });
+  });
 }
 
 // ===== 网络状态监控 =====
