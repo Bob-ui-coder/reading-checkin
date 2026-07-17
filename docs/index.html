@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<!-- v4.1 - 2026-07-16 21:00 Tab标签页切换+批量AI修复 -->
+<!-- v4.2 - 2026-07-17 修复大文件 API 截断导致 JSON 解析失败 -->
 <html lang="zh-CN">
 <head>
 <meta charset="UTF-8">
@@ -604,18 +604,40 @@ async function apiGetRecords() {
 }
 
 // 从 Gist API 直接读取（实时无缓存，需要 token）
+// 大文件会被截断，需要 fallback 到 raw URL 获取完整内容
 async function apiGetRecordsFresh() {
   const token = getToken();
-  if (!token) return await apiGetRecords(); // 没 token 就回退到 CDN
+  if (!token) return await apiGetRecords();
   const res = await fetch(GIST_API_URL, {
     headers: { 'Authorization': 'Bearer ' + token }
   });
   if (!res.ok) throw new Error('获取数据失败: ' + res.status);
   const gist = await res.json();
-  const content = gist.files['data.json']?.content || '{"records":[]}';
-  const data = JSON.parse(content);
-  if (data.aiConfig) sharedAIConfig = data.aiConfig;
-  return data.records || [];
+  const file = gist.files['data.json'];
+
+  let content;
+  if (file && file.truncated) {
+    // 大文件被截断：用 raw URL 取完整内容
+    const rawRes = await fetch((file.raw_url || GIST_RAW_URL) + '?t=' + Date.now());
+    if (!rawRes.ok) throw new Error('获取完整数据失败: ' + rawRes.status);
+    content = await rawRes.text();
+  } else {
+    content = file?.content || '{"records":[]}';
+  }
+
+  try {
+    const data = JSON.parse(content);
+    if (data.aiConfig) sharedAIConfig = data.aiConfig;
+    return data.records || [];
+  } catch (parseErr) {
+    // 解析失败：兜底尝试 raw URL
+    const rawRes = await fetch(GIST_RAW_URL + '?t=' + Date.now());
+    if (!rawRes.ok) throw new Error('获取数据失败: ' + rawRes.status);
+    const text = await rawRes.text();
+    const data = JSON.parse(text);
+    if (data.aiConfig) sharedAIConfig = data.aiConfig;
+    return data.records || [];
+  }
 }
 
 // 构建 Gist 数据（保留共享 AI 配置）
