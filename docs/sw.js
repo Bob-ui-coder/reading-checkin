@@ -1,5 +1,5 @@
 // Service Worker v1 — 读书打卡离线缓存
-const CACHE_NAME = 'reading-checkin-v2';
+const CACHE_NAME = 'reading-checkin-v3';
 const URLS = [
   './',
   './index.html'
