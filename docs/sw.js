@@ -1,5 +1,5 @@
-// Service Worker v1 — 读书打卡离线缓存
-const CACHE_NAME = 'reading-checkin-v3';
+// Service Worker v4 — 读书打卡离线缓存（强化更新机制）
+const CACHE_NAME = 'reading-checkin-v4';
 const URLS = [
   './',
   './index.html'
@@ -13,7 +13,14 @@ self.addEventListener('install', event => {
   self.skipWaiting();
 });
 
-// 激活：清理旧缓存
+// 监听消息：收到 SKIP_WAITING 直接跳过等待
+self.addEventListener('message', event => {
+  if (event.data === 'SKIP_WAITING') {
+    self.skipWaiting();
+  }
+});
+
+// 激活：清理所有旧缓存
 self.addEventListener('activate', event => {
   event.waitUntil(
     caches.keys().then(keys => Promise.all(
@@ -30,17 +37,28 @@ self.addEventListener('fetch', event => {
       event.request.url.includes('gist.githubusercontent.com')) {
     return;
   }
+  
+  // 对于 HTML 请求：始终从网络获取，不使用缓存
+  if (event.request.mode === 'navigate' ||
+      event.request.destination === 'document') {
+    event.respondWith(
+      fetch(event.request).then(response => {
+        const cloned = response.clone();
+        caches.open(CACHE_NAME).then(cache => cache.put(event.request, cloned));
+        return response;
+      }).catch(() => caches.match(event.request))
+    );
+    return;
+  }
+  
+  // 其他请求：网络优先，缓存兜底
   event.respondWith(
     fetch(event.request)
       .then(response => {
-        // 缓存成功的响应
         const cloned = response.clone();
         caches.open(CACHE_NAME).then(cache => cache.put(event.request, cloned));
         return response;
       })
-      .catch(() => {
-        // 网络失败时返回缓存
-        return caches.match(event.request);
-      })
+      .catch(() => caches.match(event.request))
   );
 });
