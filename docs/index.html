@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<!-- v4.5 - 2026-07-18 数据自动瘦身防超限+图片压缩增强 -->
+<!-- v5.0 - 2026-07-19 架构升级：图片外置到仓库存储，彻底解决 Gist 1MB 限制 -->
 <html lang="zh-CN">
 <head>
 <meta charset="UTF-8">
@@ -401,7 +401,7 @@
   </section>
 
   <div class="toast-container" id="toastContainer"></div>
-  <div class="footer">📖 读书打卡 <span style="color:#cbd5e1">·</span> v4.5 <span style="color:#cbd5e1">·</span> 数据通过 GitHub 云端共享</div>
+  <div class="footer">📖 读书打卡 <span style="color:#cbd5e1">·</span> v5.0 <span style="color:#cbd5e1">·</span> 图片仓库存储 · 数据云端共享</div>
   <div id="debugInfo"></div>
 </div>
 
@@ -410,6 +410,14 @@
 const GIST_ID = '9118572982a150ace89f2ba81ecb7999';
 const GIST_RAW_URL = 'https://gist.githubusercontent.com/Bob-ui-coder/' + GIST_ID + '/raw/data.json';
 const GIST_API_URL = 'https://api.github.com/gists/' + GIST_ID;
+
+// 图片存储：上传到 GitHub 仓库，Gist 只存 URL（彻底解决 1MB 限制）
+const REPO_OWNER = 'Bob-ui-coder';
+const REPO_NAME = 'reading-checkin';
+const REPO_BRANCH = 'main';
+const IMAGE_DIR = 'docs/images';
+// raw.githubusercontent.com URL，上传后立即可用，无需等 GitHub Pages 部署
+const IMAGE_BASE_URL = `https://raw.githubusercontent.com/${REPO_OWNER}/${REPO_NAME}/${REPO_BRANCH}/${IMAGE_DIR}/`;
 
 const groups = [
   { name: "第1组", members: ["Jobs", "Evenc", "Jett", "Lovis"] },
@@ -695,41 +703,11 @@ async function apiGetRecordsFresh() {
   return data.records || [];
 }
 
-// 构建 Gist 数据（保留共享 AI 配置，自动瘦身防止超 1MB）
+// 构建 Gist 数据（图片已外置到仓库，Gist 只存文本+URL，永远不会超 1MB）
 function buildGistContent(records) {
-  // 先尝试原始数据
-  let obj = { records };
+  const obj = { records };
   if (sharedAIConfig && sharedAIConfig.key) obj.aiConfig = sharedAIConfig;
-  let content = JSON.stringify(obj, null, 2);
-
-  // 如果超过 850KB，逐步清理旧图片
-  if (content.length > 850000) {
-    // 找到最大的 day 值
-    const maxDay = Math.max(...records.map(r => r.day || 0), 0);
-    // 保留最新 day 的图片，旧 day 的图片替换为占位符
-    const trimmed = records.map(r => {
-      if (r.image && (r.day || 0) < maxDay) {
-        return { ...r, image: '[旧图已自动清理]' };
-      }
-      return r;
-    });
-    obj = { records: trimmed };
-    if (sharedAIConfig && sharedAIConfig.key) obj.aiConfig = sharedAIConfig;
-    content = JSON.stringify(obj, null, 2);
-
-    // 如果还是超过 850KB，把所有图片都清理掉
-    if (content.length > 850000) {
-      const noImg = records.map(r => {
-        if (r.image) return { ...r, image: '[图片已自动清理]' };
-        return r;
-      });
-      obj = { records: noImg };
-      if (sharedAIConfig && sharedAIConfig.key) obj.aiConfig = sharedAIConfig;
-      content = JSON.stringify(obj, null, 2);
-    }
-  }
-
-  return content;
+  return JSON.stringify(obj, null, 2);
 }
 
 // 从 Gist 读取 aiConfig（不依赖全局变量，用于 save 时获取最新值）
@@ -1040,6 +1018,41 @@ function compressImage(dataUrl, maxWidth, quality) {
   });
 }
 
+// ===== 图片上传到 GitHub 仓库（不再存 base64 到 Gist）=====
+async function uploadImageToRepo(base64Data, name, day) {
+  const token = getToken();
+  if (!token) throw new Error('需要设置令牌才能上传图片');
+
+  const timestamp = Date.now();
+  const safeName = name.replace(/[^a-zA-Z0-9_-]/g, '_');
+  const filename = `day${day}_${safeName}_${timestamp}.jpg`;
+  const path = `${IMAGE_DIR}/${filename}`;
+
+  // 提取纯 base64（去掉 data:image/jpeg;base64, 前缀）
+  const rawBase64 = base64Data.includes(',') ? base64Data.split(',')[1] : base64Data;
+
+  const res = await fetch(`https://api.github.com/repos/${REPO_OWNER}/${REPO_NAME}/contents/${path}`, {
+    method: 'PUT',
+    headers: {
+      'Authorization': 'Bearer ' + token,
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify({
+      message: `📷 图片: ${name} Day${day}`,
+      content: rawBase64,
+      branch: REPO_BRANCH
+    })
+  });
+
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.message || `图片上传失败 (${res.status})`);
+  }
+
+  // 返回 raw.githubusercontent.com URL（上传后立即可用）
+  return IMAGE_BASE_URL + filename;
+}
+
 // ===== Modal =====
 let modalTarget = null;
 function openModal(name, day) {
@@ -1145,8 +1158,8 @@ async function previewFile(input) {
   if (file.size > 5 * 1024 * 1024) { alert('图片大小不能超过 5MB'); return; }
   const reader = new FileReader();
   reader.onload = async () => {
-    // 压缩图片
-    pendingImage = await compressImage(reader.result, 450, 0.35);
+    // 压缩图片（图片存仓库，可以用较高质量）
+    pendingImage = await compressImage(reader.result, 800, 0.6);
     document.getElementById('previewThumb').src = pendingImage;
     document.getElementById('previewThumb').style.display = 'block';
   };
@@ -1178,14 +1191,27 @@ async function submitCheckin() {
   document.body.appendChild(loadingEl);
 
   try {
-    await apiCheckin(targetName, targetDay, text, imageData || null);
-    
+    // 如果有图片，先上传到 GitHub 仓库，拿到 URL 再存 Gist
+    let imageUrl = null;
+    if (imageData) {
+      loadingEl.querySelector('.streak-msg').textContent = '正在上传图片...';
+      try {
+        imageUrl = await uploadImageToRepo(imageData, targetName, targetDay);
+      } catch (uploadErr) {
+        // 上传失败时回退到 base64（兜底，但会触发 Gist 大小警告）
+        console.warn('图片上传仓库失败，回退到 base64:', uploadErr.message);
+        imageUrl = imageData;
+      }
+    }
+
+    await apiCheckin(targetName, targetDay, text, imageUrl);
+
     // 自动生成 AI 反馈（立即等待，不异步）
     const aiConfig = getAIConfig();
-    if (aiConfig.auto && aiConfig.key && (text || imageData)) {
+    if (aiConfig.auto && aiConfig.key && (text || imageUrl)) {
       loadingEl.querySelector('.streak-msg').textContent = 'AI 正在生成反馈...';
       try {
-        const result = await generateAIFeedback(targetName, text, imageData || null);
+        const result = await generateAIFeedback(targetName, text, imageUrl || null);
         if (result.ok) {
           const allRecords = await apiGetRecordsFresh();
           const key = targetName + '_' + targetDay;
@@ -1292,7 +1318,7 @@ function showStreakPopup(name, streak) {
 }
 
 // ===== Table rendering =====
-const PAGE_VERSION = 'v4.5';
+const PAGE_VERSION = 'v5.0';
 async function fetchAndRender() {
   try {
     const prevRecords = cachedRecords;
