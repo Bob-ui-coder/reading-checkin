@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<!-- v4.4 - 2026-07-17 强制 SW 更新+数据加载多重 fallback+错误重试 -->
+<!-- v4.5 - 2026-07-18 数据自动瘦身防超限+图片压缩增强 -->
 <html lang="zh-CN">
 <head>
 <meta charset="UTF-8">
@@ -401,7 +401,7 @@
   </section>
 
   <div class="toast-container" id="toastContainer"></div>
-  <div class="footer">📖 读书打卡 <span style="color:#cbd5e1">·</span> v4.4 <span style="color:#cbd5e1">·</span> 数据通过 GitHub 云端共享</div>
+  <div class="footer">📖 读书打卡 <span style="color:#cbd5e1">·</span> v4.5 <span style="color:#cbd5e1">·</span> 数据通过 GitHub 云端共享</div>
   <div id="debugInfo"></div>
 </div>
 
@@ -695,11 +695,41 @@ async function apiGetRecordsFresh() {
   return data.records || [];
 }
 
-// 构建 Gist 数据（保留共享 AI 配置）
+// 构建 Gist 数据（保留共享 AI 配置，自动瘦身防止超 1MB）
 function buildGistContent(records) {
-  const obj = { records };
+  // 先尝试原始数据
+  let obj = { records };
   if (sharedAIConfig && sharedAIConfig.key) obj.aiConfig = sharedAIConfig;
-  return JSON.stringify(obj, null, 2);
+  let content = JSON.stringify(obj, null, 2);
+
+  // 如果超过 850KB，逐步清理旧图片
+  if (content.length > 850000) {
+    // 找到最大的 day 值
+    const maxDay = Math.max(...records.map(r => r.day || 0), 0);
+    // 保留最新 day 的图片，旧 day 的图片替换为占位符
+    const trimmed = records.map(r => {
+      if (r.image && (r.day || 0) < maxDay) {
+        return { ...r, image: '[旧图已自动清理]' };
+      }
+      return r;
+    });
+    obj = { records: trimmed };
+    if (sharedAIConfig && sharedAIConfig.key) obj.aiConfig = sharedAIConfig;
+    content = JSON.stringify(obj, null, 2);
+
+    // 如果还是超过 850KB，把所有图片都清理掉
+    if (content.length > 850000) {
+      const noImg = records.map(r => {
+        if (r.image) return { ...r, image: '[图片已自动清理]' };
+        return r;
+      });
+      obj = { records: noImg };
+      if (sharedAIConfig && sharedAIConfig.key) obj.aiConfig = sharedAIConfig;
+      content = JSON.stringify(obj, null, 2);
+    }
+  }
+
+  return content;
 }
 
 // 从 Gist 读取 aiConfig（不依赖全局变量，用于 save 时获取最新值）
@@ -1116,7 +1146,7 @@ async function previewFile(input) {
   const reader = new FileReader();
   reader.onload = async () => {
     // 压缩图片
-    pendingImage = await compressImage(reader.result, 600, 0.5);
+    pendingImage = await compressImage(reader.result, 450, 0.35);
     document.getElementById('previewThumb').src = pendingImage;
     document.getElementById('previewThumb').style.display = 'block';
   };
@@ -1262,7 +1292,7 @@ function showStreakPopup(name, streak) {
 }
 
 // ===== Table rendering =====
-const PAGE_VERSION = 'v4.4';
+const PAGE_VERSION = 'v4.5';
 async function fetchAndRender() {
   try {
     const prevRecords = cachedRecords;
