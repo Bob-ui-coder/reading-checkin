@@ -1,5 +1,5 @@
-// Service Worker v4 — 读书打卡离线缓存（强化更新机制）
-const CACHE_NAME = 'reading-checkin-v4';
+// Service Worker v5 — 读书打卡离线缓存（强化更新机制）
+const CACHE_NAME = 'reading-checkin-v5';
 const URLS = [
   './',
   './index.html'
