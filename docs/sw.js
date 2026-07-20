@@ -1,64 +1,27 @@
-// Service Worker v6 — v5.0 架构升级（图片仓库存储）
-const CACHE_NAME = 'reading-checkin-v6';
-const URLS = [
-  './',
-  './index.html'
-];
+// Service Worker v7 — 自毁版本（v5.1 已移除 SW，此文件仅用于清理旧版 SW 缓存）
+// v5.1 决定彻底移除 Service Worker：实时数据共享应用不需要离线缓存，
+// SW 缓存是反复导致用户看到旧版本页面的元凶。
 
-// 安装：预缓存核心页面
 self.addEventListener('install', event => {
-  event.waitUntil(
-    caches.open(CACHE_NAME).then(cache => cache.addAll(URLS))
-  );
+  // 跳过等待，立即激活
   self.skipWaiting();
 });
 
-// 监听消息：收到 SKIP_WAITING 直接跳过等待
-self.addEventListener('message', event => {
-  if (event.data === 'SKIP_WAITING') {
-    self.skipWaiting();
-  }
-});
-
-// 激活：清理所有旧缓存
 self.addEventListener('activate', event => {
+  // 清除所有缓存
   event.waitUntil(
-    caches.keys().then(keys => Promise.all(
-      keys.filter(k => k !== CACHE_NAME).map(k => caches.delete(k))
-    ))
+    caches.keys().then(keys => Promise.all(keys.map(k => caches.delete(k))))
   );
+  // 注销自己 + 通知所有客户端
+  self.registration.unregister().then(() => {
+    self.clients.matchAll().then(clients => {
+      clients.forEach(c => c.navigate(c.url));
+    });
+  });
   self.clients.claim();
 });
 
-// 请求拦截：网络优先，失败回退缓存
+// 所有请求直接走网络，不拦截不缓存
 self.addEventListener('fetch', event => {
-  // 跳过 Gist API 请求（让它们走网络）
-  if (event.request.url.includes('api.github.com') ||
-      event.request.url.includes('gist.githubusercontent.com')) {
-    return;
-  }
-  
-  // 对于 HTML 请求：始终从网络获取，不使用缓存
-  if (event.request.mode === 'navigate' ||
-      event.request.destination === 'document') {
-    event.respondWith(
-      fetch(event.request).then(response => {
-        const cloned = response.clone();
-        caches.open(CACHE_NAME).then(cache => cache.put(event.request, cloned));
-        return response;
-      }).catch(() => caches.match(event.request))
-    );
-    return;
-  }
-  
-  // 其他请求：网络优先，缓存兜底
-  event.respondWith(
-    fetch(event.request)
-      .then(response => {
-        const cloned = response.clone();
-        caches.open(CACHE_NAME).then(cache => cache.put(event.request, cloned));
-        return response;
-      })
-      .catch(() => caches.match(event.request))
-  );
+  // 不调用 respondWith，让浏览器默认处理
 });
