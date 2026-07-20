@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<!-- v5.0 - 2026-07-19 架构升级：图片外置到仓库存储，彻底解决 Gist 1MB 限制 -->
+<!-- v5.1 - 2026-07-20 稳定性修复：移除SW缓存+移除base64回退+自动清理+大小保护 -->
 <html lang="zh-CN">
 <head>
 <meta charset="UTF-8">
@@ -401,7 +401,7 @@
   </section>
 
   <div class="toast-container" id="toastContainer"></div>
-  <div class="footer">📖 读书打卡 <span style="color:#cbd5e1">·</span> v5.0 <span style="color:#cbd5e1">·</span> 图片仓库存储 · 数据云端共享</div>
+  <div class="footer">📖 读书打卡 <span style="color:#cbd5e1">·</span> v5.1 <span style="color:#cbd5e1">·</span> 稳定版 · 数据云端共享</div>
   <div id="debugInfo"></div>
 </div>
 
@@ -418,6 +418,14 @@ const REPO_BRANCH = 'main';
 const IMAGE_DIR = 'docs/images';
 // raw.githubusercontent.com URL，上传后立即可用，无需等 GitHub Pages 部署
 const IMAGE_BASE_URL = `https://raw.githubusercontent.com/${REPO_OWNER}/${REPO_NAME}/${REPO_BRANCH}/${IMAGE_DIR}/`;
+// jsDelivr CDN URL（中国大陆访问更稳定，渲染时优先使用）
+const JSDELIVR_BASE_URL = `https://cdn.jsdelivr.net/gh/${REPO_OWNER}/${REPO_NAME}@${REPO_BRANCH}/${IMAGE_DIR}/`;
+
+// 统一图片 URL：raw URL → jsDelivr CDN（中国大陆访问更稳定）
+function getImageUrl(url) {
+  if (!url || url.startsWith('data:')) return url;
+  return url.replace(IMAGE_BASE_URL, JSDELIVR_BASE_URL);
+}
 
 const groups = [
   { name: "第1组", members: ["Jobs", "Evenc", "Jett", "Lovis"] },
@@ -532,11 +540,12 @@ function openSettings() {
 
         <div class="help" style="margin-top:12px">
           <strong>如何获取令牌？</strong><br>
-          1. 打开 <a href="https://github.com/settings/tokens/new?scopes=gist&description=reading-checkin" target="_blank">GitHub Token 创建页</a><br>
-          2. 勾选 <code>gist</code> 权限<br>
+          1. 打开 <a href="https://github.com/settings/tokens/new?scopes=gist,repo&description=reading-checkin" target="_blank">GitHub Token 创建页</a><br>
+          2. 勾选 <code>gist</code> 和 <code>repo</code> 两个权限（缺一不可）<br>
           3. 点击底部 "Generate token"<br>
           4. 复制生成的 token，粘贴到上方输入框<br>
-          5. 点击保存即可
+          5. 点击保存即可<br>
+          <span style="color:#ef4444">⚠️ 注意：如果没有勾选 repo 权限，图片将无法上传，打卡会失败！</span>
         </div>
         <div class="modal-actions">
           <button class="btn btn-cancel" onclick="closeSettings()">取消</button>
@@ -707,7 +716,12 @@ async function apiGetRecordsFresh() {
 function buildGistContent(records) {
   const obj = { records };
   if (sharedAIConfig && sharedAIConfig.key) obj.aiConfig = sharedAIConfig;
-  return JSON.stringify(obj, null, 2);
+  const content = JSON.stringify(obj, null, 2);
+  // 数据大小保护：超过 500KB 说明可能有 base64 图片混入，拒绝保存
+  if (content.length > 500000) {
+    throw new Error('数据异常膨胀（' + Math.round(content.length / 1024) + 'KB），可能包含未上传的 base64 图片。请点击页面「强制刷新」后重试，或联系管理员清理。');
+  }
+  return content;
 }
 
 // 从 Gist 读取 aiConfig（不依赖全局变量，用于 save 时获取最新值）
@@ -1046,11 +1060,48 @@ async function uploadImageToRepo(base64Data, name, day) {
 
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));
+    if (res.status === 403) {
+      throw new Error('Token 权限不足：需要 gist + repo 权限。请到设置中重新创建 Token，勾选 gist 和 repo。');
+    }
+    if (res.status === 401) {
+      throw new Error('Token 无效或已过期，请到设置中重新输入。');
+    }
     throw new Error(err.message || `图片上传失败 (${res.status})`);
   }
 
   // 返回 raw.githubusercontent.com URL（上传后立即可用）
   return IMAGE_BASE_URL + filename;
+}
+
+// ===== 自动清理 base64 图片（管理员加载时自动执行）=====
+// 检测 Gist 中残留的 base64 图片，上传到仓库替换为 URL，从根本上防止 Gist 膨胀
+async function cleanBase64Images() {
+  if (!getToken() || !isAdmin()) return false;
+  try {
+    const records = await apiGetRecordsFresh();
+    const base64Records = records.filter(r => r.image && r.image.startsWith('data:image'));
+    if (base64Records.length === 0) return false;
+
+    console.log('🔧 发现 ' + base64Records.length + ' 张 base64 图片，开始自动迁移到仓库...');
+    
+    for (const rec of base64Records) {
+      try {
+        const url = await uploadImageToRepo(rec.image, rec.name, rec.day);
+        rec.image = url;
+        console.log('✅ 已迁移: ' + rec.name + ' Day' + rec.day);
+      } catch (e) {
+        console.warn('❌ 迁移失败，删除 base64 数据以减小体积: ' + rec.name + ' Day' + rec.day, e.message);
+        rec.image = null; // 删除 base64 数据，保留文字
+      }
+    }
+    
+    await apiSaveRecords(records, 'replace');
+    console.log('🎉 base64 图片清理完成！');
+    return true;
+  } catch (e) {
+    console.error('自动清理失败:', e);
+    return false;
+  }
 }
 
 // ===== Modal =====
@@ -1073,7 +1124,7 @@ function openModal(name, day) {
             <h3>${name} · Day ${day}</h3>
             <div class="hint">${dateStr} · 🔒 只读（非本人）</div>
             ${rec.text ? `<div style="padding:12px;background:#f8f9fa;border-radius:8px;font-size:14px;line-height:1.6;white-space:pre-wrap">${escapeHtml(rec.text)}</div>` : '<div style="color:#ccc;text-align:center;padding:20px">无文字内容</div>'}
-            ${rec.image ? `<div style="margin-top:12px"><img src="${rec.image}" style="max-width:100%;border-radius:8px;border:1px solid #eee" onclick="openLightbox(this.src)"></div>` : ''}
+            ${rec.image ? `<div style="margin-top:12px"><img src="${getImageUrl(rec.image)}" data-raw="${escapeHtml(rec.image)}" onerror="this.onerror=null;this.src=this.dataset.raw" style="max-width:100%;border-radius:8px;border:1px solid #eee" onclick="openLightbox(this.src)"></div>` : ''}
             <div class="modal-actions">
               <button class="btn btn-cancel" onclick="closeModal()">关闭</button>
             </div>
@@ -1104,7 +1155,7 @@ function openModal(name, day) {
             📷 ${existing && existing.image ? '更换图片' : '添加图片'}
             <input type="file" id="modalFile" accept="image/*" style="display:none" onchange="previewFile(this)">
           </label>
-          ${existing && existing.image ? `<img class="preview-thumb" id="previewThumb" src="${existing.image}" style="display:block">` : '<img class="preview-thumb" id="previewThumb">'}
+          ${existing && existing.image ? `<img class="preview-thumb" id="previewThumb" src="${getImageUrl(existing.image)}" data-raw="${escapeHtml(existing.image)}" onerror="this.onerror=null;this.src=this.dataset.raw" style="display:block">` : '<img class="preview-thumb" id="previewThumb">'}
         </div>
         <div class="modal-actions">
           ${isEditing ? '<button class="btn btn-danger" style="margin-right:auto" onclick="deleteFromModal()">🗑️ 删除</button>' : ''}
@@ -1198,9 +1249,12 @@ async function submitCheckin() {
       try {
         imageUrl = await uploadImageToRepo(imageData, targetName, targetDay);
       } catch (uploadErr) {
-        // 上传失败时回退到 base64（兜底，但会触发 Gist 大小警告）
-        console.warn('图片上传仓库失败，回退到 base64:', uploadErr.message);
-        imageUrl = imageData;
+        // 图片上传失败时，不回退到 base64（会导致 Gist 膨胀至 1MB 崩溃）
+        // 只保存文字心得，提示用户图片上传失败
+        console.warn('图片上传仓库失败:', uploadErr.message);
+        imageUrl = null;
+        loadingEl.querySelector('.streak-msg').textContent = '⚠️ 图片上传失败，仅保存文字心得';
+        await new Promise(r => setTimeout(r, 2000));
       }
     }
 
@@ -1318,7 +1372,7 @@ function showStreakPopup(name, streak) {
 }
 
 // ===== Table rendering =====
-const PAGE_VERSION = 'v5.0';
+const PAGE_VERSION = 'v5.1';
 async function fetchAndRender() {
   try {
     const prevRecords = cachedRecords;
@@ -1649,7 +1703,7 @@ function renderFeed(records) {
         <div class="body">
           <div class="meta"><strong>${escapeHtml(r.name)}</strong>${streakMeta} · Day ${r.day} · ${dateStr}</div>
           ${r.text ? `<div class="text">${escapeHtml(r.text)}</div>` : ''}
-          ${r.image ? `<div class="img-row"><img src="${r.image}" onclick="openLightbox(this.src)" loading="lazy"></div>` : ''}
+          ${r.image ? `<div class="img-row"><img src="${getImageUrl(r.image)}" data-raw="${escapeHtml(r.image)}" onerror="this.onerror=null;this.src=this.dataset.raw" onclick="openLightbox(this.src)" loading="lazy"></div>` : ''}
           ${feedbackHtml}
           ${deleteBtn}
         </div>
@@ -1729,8 +1783,17 @@ async function forceReload() {
 
 // ===== 初始化 =====
 updateTokenBanner();
-// 首次加载，失败后自动重试一次
-fetchAndRender().catch(() => {
+// 首次加载，失败后自动重试一次；管理员自动清理 base64 图片
+fetchAndRender().then(async () => {
+  // 管理员自动清理 base64 图片（修复历史数据膨胀问题）
+  if (isAdmin() && getToken()) {
+    const cleaned = await cleanBase64Images();
+    if (cleaned) {
+      console.log('🔧 检测到并已清理 base64 图片，重新加载...');
+      await fetchAndRender();
+    }
+  }
+}).catch(() => {
   setTimeout(() => fetchAndRender(), 2000);
 });
 // 如果首次加载后数据为空，3秒后自动重试
@@ -1745,47 +1808,19 @@ document.getElementById('dayCount').addEventListener('change', () => renderAll(c
 // 每60秒自动刷新（降低频率避免CDN缓存问题）
 setInterval(fetchAndRender, 60000);
 
-// ===== Service Worker 离线缓存（带强制更新检测）=====
+// ===== 彻底移除 Service Worker（实时数据应用不需要离线缓存，SW 是反复出问题的元凶）=====
+// 每次加载都注销所有 SW + 清除所有缓存，确保用户始终获取最新版本
 if ('serviceWorker' in navigator) {
-  navigator.serviceWorker.register('./sw.js').then(reg => {
-    // 检测 SW 更新
-    reg.addEventListener('updatefound', () => {
-      const newSW = reg.installing;
-      if (newSW) {
-        newSW.addEventListener('statechange', () => {
-          if (newSW.state === 'activated') {
-            // 新 SW 已激活，强制重载页面以加载最新代码
-            console.log('SW updated, reloading page...');
-            window.location.reload();
-          }
-        });
-      }
-    });
-    // 如果有等待中的 SW，直接激活它
-    if (reg.waiting) {
-      reg.waiting.postMessage('SKIP_WAITING');
-    }
-  }).catch(e => {
-    // SW 注册失败时注销旧 SW
-    console.warn('SW registration failed, unregistering:', e);
-    navigator.serviceWorker.getRegistrations().then(regs => {
-      regs.forEach(r => r.unregister());
-    });
-  });
-  
-  // 监听来自 SW 的消息
-  navigator.serviceWorker.addEventListener('message', event => {
-    if (event.data === 'SKIP_WAITING') {
-      // 通知等待中的 SW 直接跳过等待
-    }
-  });
-  
-  // 页面加载时检查是否有旧的 SW 需要清理
   navigator.serviceWorker.getRegistrations().then(regs => {
     regs.forEach(reg => {
-      reg.update().catch(() => {});
+      reg.unregister().then(() => console.log('SW 已注销:', reg.scope));
     });
   });
+  if ('caches' in window) {
+    caches.keys().then(keys => {
+      keys.forEach(k => caches.delete(k));
+    });
+  }
 }
 
 // ===== 网络状态监控 =====
