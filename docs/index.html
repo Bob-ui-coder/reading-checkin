@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<!-- v5.1 - 2026-07-20 稳定性修复：移除SW缓存+移除base64回退+自动清理+大小保护 -->
+<!-- v6.1 - 2026-07-24 修复记录消失(merge替代replace) + 天数持久化 -->
 <html lang="zh-CN">
 <head>
 <meta charset="UTF-8">
@@ -401,7 +401,7 @@
   </section>
 
   <div class="toast-container" id="toastContainer"></div>
-  <div class="footer">📖 读书打卡 <span style="color:#cbd5e1">·</span> v5.1 <span style="color:#cbd5e1">·</span> 稳定版 · 数据云端共享</div>
+  <div class="footer">📖 读书打卡 <span style="color:#cbd5e1">·</span> v6.1 <span style="color:#cbd5e1">·</span> 数据安全版 · 记录不丢失</div>
   <div id="debugInfo"></div>
 </div>
 
@@ -733,6 +733,80 @@ async function fetchAIConfigFromGist(token) {
   return sharedAIConfig;
 }
 
+// ===== v6.0 保存前自动清理：强制扫描所有 base64 图片，上传到仓库或丢弃 ====
+// 这是防止 Gist 膨胀的最后一层防线，无论代码版本如何都能拦截
+async function sanitizeRecordsBeforeSave(records) {
+  const token = getToken();
+  if (!token) return records; // 无 token 时无法上传，但也不能清理（会导致图片丢失）
+  
+  let changed = false;
+  for (const r of records) {
+    if (!r.image || !r.image.startsWith('data:image')) continue;
+    
+    try {
+      const url = await uploadImageToRepoSafe(r.image, r.name, r.day);
+      r.image = url;
+      changed = true;
+      console.log('✅ save前已迁移: ' + r.key);
+    } catch (e) {
+      // 上传失败：丢弃图片，保留文字。这是唯一安全的做法
+      console.warn('⚠️ save前图片迁移失败，已丢弃: ' + r.key, e.message);
+      r.image = null;
+      changed = true;
+    }
+  }
+  
+  if (changed) {
+    console.log('🔧 save前自动清理完成，数据已净化');
+  }
+  return records;
+}
+
+// v6.0 图片上传增强版：自动压缩 + 重试，减少上传失败
+async function uploadImageToRepoSafe(base64Data, name, day) {
+  const token = getToken();
+  if (!token) throw new Error('需要设置令牌');
+
+  // 先尝试压缩
+  let finalData = base64Data;
+  try {
+    const compressed = await compressImageForUpload(base64Data, 600, 0.4);
+    if (compressed && compressed.length < base64Data.length) {
+      finalData = compressed;
+    }
+  } catch (e) { /* 压缩失败就用原图 */ }
+  
+  // 重试 2 次
+  let lastErr;
+  for (let attempt = 0; attempt < 2; attempt++) {
+    try {
+      return await uploadImageToRepo(finalData, name, day);
+    } catch (e) {
+      lastErr = e;
+      if (attempt === 0) await new Promise(r => setTimeout(r, 1000));
+    }
+  }
+  throw lastErr;
+}
+
+// v6.0 图片压缩：Canvas 转 JPEG 限制尺寸和质量
+function compressImageForUpload(dataUrl, maxW, quality) {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    img.onload = () => {
+      let w = img.width, h = img.height;
+      if (w > maxW) { h = Math.round(h * (maxW / w)); w = maxW; }
+      const c = document.createElement('canvas');
+      c.width = w; c.height = h;
+      const ctx = c.getContext('2d');
+      ctx.drawImage(img, 0, 0, w, h);
+      resolve(c.toDataURL('image/jpeg', quality));
+    };
+    img.onerror = () => reject(new Error('图片加载失败'));
+    img.src = dataUrl;
+  });
+}
+
 async function apiSaveRecords(records, mode) {
   const token = getToken();
   if (!token) throw new Error('未设置令牌，请先点击"设置"配置令牌');
@@ -744,6 +818,7 @@ async function apiSaveRecords(records, mode) {
   // mode === 'replace' 时直接覆盖（用于删除/重置）
   // mode === 'merge' 或未指定时合并（用于打卡，防止覆盖别人的数据）
   if (mode === 'replace') {
+    records = await sanitizeRecordsBeforeSave(records); // v6.0 保存前自动清理
     const content = buildGistContent(records);
     const patchRes = await fetch(GIST_API_URL, {
       method: 'PATCH',
@@ -776,7 +851,8 @@ async function apiSaveRecords(records, mode) {
         if (!newKeys.has(r.key)) merged.push(r);
       }
 
-      const mergedContent = buildGistContent(merged);
+      const cleaned = await sanitizeRecordsBeforeSave(merged); // v6.0 保存前自动清理
+      const mergedContent = buildGistContent(cleaned);
       const patchRes = await fetch(GIST_API_URL, {
         method: 'PATCH',
         headers: {
@@ -788,13 +864,52 @@ async function apiSaveRecords(records, mode) {
         })
       });
 
-      if (patchRes.ok) return merged;
+      if (patchRes.ok) return cleaned;
       if (patchRes.status === 409 && attempt < 2) {
         await new Promise(r => setTimeout(r, 500 * (attempt + 1)));
         continue;
       }
       const err = await patchRes.json();
       throw new Error(err.message || '保存失败');
+    } catch (e) {
+      if (attempt === 2) throw e;
+      await new Promise(r => setTimeout(r, 500 * (attempt + 1)));
+    }
+  }
+}
+
+// v6.1 安全更新单条记录反馈：读取最新数据 → 只改一条 → merge 模式保存
+// 彻底解决 AI 反馈保存时覆盖并发打卡记录的问题
+async function apiUpdateFeedback(name, day, feedback) {
+  const token = getToken();
+  if (!token) throw new Error('未设置令牌');
+  const key = name + '_' + day;
+
+  for (let attempt = 0; attempt < 3; attempt++) {
+    try {
+      const data = await readFullGistData(token);
+      let records = data.records || [];
+      if (data.aiConfig) sharedAIConfig = data.aiConfig;
+
+      const idx = records.findIndex(r => r.key === key);
+      if (idx >= 0) {
+        records[idx].feedback = feedback;
+        records[idx].feedbackTime = Date.now();
+      }
+
+      const cleaned = await sanitizeRecordsBeforeSave(records);
+      const content = buildGistContent(cleaned);
+      const patchRes = await fetch(GIST_API_URL, {
+        method: 'PATCH',
+        headers: { 'Authorization': 'Bearer ' + token, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ files: { 'data.json': { content } } })
+      });
+      if (patchRes.ok) return cleaned;
+      if (patchRes.status === 409 && attempt < 2) {
+        await new Promise(r => setTimeout(r, 500 * (attempt + 1)));
+        continue;
+      }
+      throw new Error('保存反馈失败');
     } catch (e) {
       if (attempt === 2) throw e;
       await new Promise(r => setTimeout(r, 500 * (attempt + 1)));
@@ -935,15 +1050,9 @@ async function requestAIFeedback(name, day) {
   
   if (result.ok) {
     const feedback = result.feedback;
-    // 重新获取最新数据（生成反馈期间可能有其他人打卡），再更新这一条
-    const allRecords = await apiGetRecordsFresh();
-    const idx = allRecords.findIndex(r => r.key === name + '_' + day);
-    if (idx >= 0) {
-      allRecords[idx].feedback = feedback;
-      allRecords[idx].feedbackTime = Date.now();
-    }
-    await apiSaveRecords(allRecords, 'replace');
-    cachedRecords = allRecords;
+    // v6.1: 用安全更新函数，只改这一条反馈，不覆盖并发打卡记录
+    await apiUpdateFeedback(name, day, feedback);
+    cachedRecords = await apiGetRecordsFresh();
     renderAll(cachedRecords);
   } else {
     if (btn) { btn.disabled = false; btn.textContent = '🤖 AI 反馈'; }
@@ -978,20 +1087,13 @@ async function batchAIFeedback() {
   let fail = 0;
   let firstError = '';
 
-  // 先获取最新数据
-  let allRecords = await apiGetRecordsFresh();
-  const recordMap = {};
-  allRecords.forEach(r => { recordMap[r.key] = r; });
-
+  // v6.1: 逐条生成并保存反馈，避免长时间占用导致并发打卡丢失
   for (const rec of pending) {
     try {
       const result = await generateAIFeedback(rec.name, rec.text, rec.image || null);
       if (result.ok) {
-        const target = recordMap[rec.key];
-        if (target) {
-          target.feedback = result.feedback;
-          target.feedbackTime = Date.now();
-        }
+        // 每条反馈单独保存（merge 模式），不会覆盖期间别人的打卡
+        await apiUpdateFeedback(rec.name, rec.day, result.feedback);
         success++;
       } else {
         fail++;
@@ -1003,9 +1105,7 @@ async function batchAIFeedback() {
     }
   }
 
-  // 保存到 Gist
-  await apiSaveRecords(allRecords, 'replace');
-  cachedRecords = allRecords;
+  cachedRecords = await apiGetRecordsFresh();
   renderAll(cachedRecords);
 
   let msg = `批量生成完成！\n✅ 成功: ${success} 条`;
@@ -1073,10 +1173,9 @@ async function uploadImageToRepo(base64Data, name, day) {
   return IMAGE_BASE_URL + filename;
 }
 
-// ===== 自动清理 base64 图片（管理员加载时自动执行）=====
-// 检测 Gist 中残留的 base64 图片，上传到仓库替换为 URL，从根本上防止 Gist 膨胀
+// ===== v6.0 自动清理 base64 图片（所有有 token 的用户加载时都会触发）=====
 async function cleanBase64Images() {
-  if (!getToken() || !isAdmin()) return false;
+  if (!getToken()) return false;
   try {
     const records = await apiGetRecordsFresh();
     const base64Records = records.filter(r => r.image && r.image.startsWith('data:image'));
@@ -1095,7 +1194,7 @@ async function cleanBase64Images() {
       }
     }
     
-    await apiSaveRecords(records, 'replace');
+    await apiSaveRecords(records); // v6.1: merge 模式，不覆盖并发打卡
     console.log('🎉 base64 图片清理完成！');
     return true;
   } catch (e) {
@@ -1267,14 +1366,8 @@ async function submitCheckin() {
       try {
         const result = await generateAIFeedback(targetName, text, imageUrl || null);
         if (result.ok) {
-          const allRecords = await apiGetRecordsFresh();
-          const key = targetName + '_' + targetDay;
-          const idx = allRecords.findIndex(r => r.key === key);
-          if (idx >= 0) {
-            allRecords[idx].feedback = result.feedback;
-            allRecords[idx].feedbackTime = Date.now();
-            await apiSaveRecords(allRecords, 'replace');
-          }
+          // v6.1: 安全保存反馈，不覆盖并发打卡记录
+          await apiUpdateFeedback(targetName, targetDay, result.feedback);
         } else {
           console.error('AI 反馈生成失败:', result.message);
           // AI 失败不影响打卡结果，但保存错误原因到 loading 提示
@@ -1372,7 +1465,7 @@ function showStreakPopup(name, streak) {
 }
 
 // ===== Table rendering =====
-const PAGE_VERSION = 'v5.1';
+const PAGE_VERSION = 'v6.1';
 async function fetchAndRender() {
   try {
     const prevRecords = cachedRecords;
@@ -1404,6 +1497,11 @@ async function fetchAndRender() {
     }
     
     cachedRecords = records || [];
+    
+    // v6.0 备份到 localStorage（即使 Gist 挂了也有本地数据）
+    try {
+      localStorage.setItem('reading_checkin_backup', JSON.stringify(cachedRecords));
+    } catch (e) { /* localStorage 满了 */ }
     
     // 隐藏错误提示
     const errBanner = document.getElementById('errorBanner');
@@ -1782,11 +1880,15 @@ async function forceReload() {
 }
 
 // ===== 初始化 =====
+// v6.1: 加载上次保存的天数
+(function() {
+  const savedDay = localStorage.getItem('reading_checkin_day_count');
+  if (savedDay) document.getElementById('dayCount').value = savedDay;
+})();
 updateTokenBanner();
-// 首次加载，失败后自动重试一次；管理员自动清理 base64 图片
+// 首次加载，失败后自动重试一次；自动清理 base64 图片（v6.0：所有用户触发）
 fetchAndRender().then(async () => {
-  // 管理员自动清理 base64 图片（修复历史数据膨胀问题）
-  if (isAdmin() && getToken()) {
+  if (getToken()) {
     const cleaned = await cleanBase64Images();
     if (cleaned) {
       console.log('🔧 检测到并已清理 base64 图片，重新加载...');
@@ -1803,8 +1905,12 @@ setTimeout(() => {
     fetchAndRender();
   }
 }, 3000);
-// 天数改变时立即重渲染
-document.getElementById('dayCount').addEventListener('change', () => renderAll(cachedRecords));
+// 天数改变时立即重渲染 + 持久化到 localStorage
+document.getElementById('dayCount').addEventListener('change', () => {
+  const val = parseInt(document.getElementById('dayCount').value) || 7;
+  localStorage.setItem('reading_checkin_day_count', val);
+  renderAll(cachedRecords);
+});
 // 每60秒自动刷新（降低频率避免CDN缓存问题）
 setInterval(fetchAndRender, 60000);
 
