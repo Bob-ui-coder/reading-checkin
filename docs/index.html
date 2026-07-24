@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<!-- v6.3 - 2026-07-24 移除孤儿记录 + 新增姓名校验防线（非名单成员拒绝打卡） -->
+<!-- v7.0 - 2026-07-24 设计重构：移动优先三段式（今日/进度/管理）、今日心跳、我的学习一键、AI教练首页、小组战报、文案打卡→学习 -->
 <html lang="zh-CN">
 <head>
 <meta charset="UTF-8">
@@ -339,13 +339,118 @@
   /* ===== Footer ===== */
   .footer { margin-top: 24px; text-align: center; font-size: 12px; color: var(--text-3); padding-bottom: 20px; }
   #debugInfo { text-align: center; font-size: 11px; color: var(--text-3); padding: 4px; }
+
+  /* ===== 分段导航（移动优先） ===== */
+  .container { max-width: 760px; }
+  .seg {
+    display: flex; gap: 4px; background: var(--card); border: 1px solid var(--border);
+    border-radius: 12px; padding: 4px; margin-bottom: 16px;
+    position: sticky; top: 8px; z-index: 50; box-shadow: var(--shadow);
+  }
+  .seg-btn {
+    flex: 1; padding: 10px 8px; border: none; background: none; cursor: pointer;
+    font-size: 14px; font-weight: 600; color: var(--text-3); border-radius: 9px;
+    transition: all .2s; white-space: nowrap; display: inline-flex; align-items: center; justify-content: center; gap: 5px;
+  }
+  .seg-btn:hover { color: var(--text-2); }
+  .seg-btn.active { background: var(--primary); color: #fff; box-shadow: 0 2px 8px rgba(79,70,229,.3); }
+  .seg-btn.hidden { display: none; }
+  .seg-badge {
+    display: none; margin-left: 2px; background: var(--red); color: #fff;
+    font-size: 10px; padding: 1px 6px; border-radius: 10px; font-weight: 700;
+  }
+  .view { animation: fadeIn .25s ease; }
+
+  /* ===== 今日心跳 ===== */
+  .heartbeat-panel {
+    padding: 18px 20px; display: flex; align-items: center; gap: 20px;
+    background: linear-gradient(135deg, #eef2ff, #faf5ff);
+  }
+  .hb-ring-wrap { position: relative; width: 96px; height: 96px; flex-shrink: 0; }
+  .hb-ring { transform: rotate(-90deg); }
+  .hb-ring .track { fill: none; stroke: #e0e7ff; stroke-width: 9; }
+  .hb-ring .bar { fill: none; stroke: var(--primary); stroke-width: 9; stroke-linecap: round; transition: stroke-dashoffset 1s cubic-bezier(.4,0,.2,1); }
+  .hb-ring-center { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; }
+  .hb-num { font-size: 22px; font-weight: 800; color: var(--primary); line-height: 1; }
+  .hb-num small { font-size: 12px; color: var(--text-3); font-weight: 600; }
+  .hb-right { flex: 1; min-width: 0; }
+  .hb-title { font-size: 17px; font-weight: 700; color: var(--text); }
+  .hb-sub { font-size: 12px; color: var(--text-3); margin-top: 2px; }
+  .hb-live { display: inline-flex; align-items: center; gap: 5px; margin-top: 8px; font-size: 11px; color: var(--green-dark); font-weight: 600; }
+  .hb-live .pulse-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--green); animation: pulse 1.6s infinite; }
+  .hb-day { margin-top: 8px; font-size: 12px; color: var(--text-2); }
+  .hb-day b { color: var(--primary); }
+
+  /* ===== 我的学习（一键） ===== */
+  .mycard { padding: 16px 20px; }
+  .mycard-top { display: flex; align-items: center; gap: 12px; }
+  .mycard-avatar {
+    width: 44px; height: 44px; border-radius: 50%;
+    background: linear-gradient(135deg, var(--primary), #7c3aed); color: #fff;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 18px; font-weight: 700; flex-shrink: 0;
+  }
+  .mycard-info { flex: 1; min-width: 0; }
+  .mycard-name { font-size: 15px; font-weight: 700; color: var(--text); }
+  .mycard-streak { font-size: 12px; color: var(--text-3); margin-top: 2px; }
+  .mycard-streak b { color: var(--orange); }
+  .btn-learn {
+    border: none; background: linear-gradient(135deg, var(--green), #34d399); color: #fff;
+    padding: 12px 22px; border-radius: 12px; font-size: 15px; font-weight: 700; cursor: pointer;
+    box-shadow: 0 4px 14px rgba(16,185,129,.35); transition: transform .15s, box-shadow .2s; white-space: nowrap;
+  }
+  .btn-learn:hover { transform: translateY(-1px); box-shadow: 0 6px 18px rgba(16,185,129,.45); }
+  .btn-learn:active { transform: scale(.96); }
+  .btn-learn.done { background: linear-gradient(135deg, #a78bfa, #7c3aed); box-shadow: 0 4px 14px rgba(124,58,237,.3); }
+  .mycard-hint { font-size: 12px; color: var(--text-3); margin-top: 10px; }
+  .mycard-hint.warn { color: var(--orange); }
+
+  /* ===== AI 教练（首页高光） ===== */
+  .ai-coach .ai-card { margin: 0 20px 14px; padding: 14px; border-radius: 12px; background: linear-gradient(135deg, #fefce8, #fef9c3); border: 1px solid #fde68a; animation: popIn .4s ease; }
+  .ai-coach .ai-card .ai-head { display: flex; align-items: center; gap: 6px; font-size: 12px; font-weight: 700; color: #b45309; margin-bottom: 6px; }
+  .ai-coach .ai-card .ai-name { font-size: 12px; color: #92400e; margin-bottom: 4px; }
+  .ai-coach .ai-card .ai-text { font-size: 14px; color: #78350f; line-height: 1.6; white-space: pre-wrap; word-break: break-word; }
+  .ai-coach .ai-empty { margin: 0 20px 16px; padding: 16px 14px; border-radius: 12px; background: var(--bg); font-size: 13px; color: var(--text-3); text-align: center; line-height: 1.6; }
+  .ai-coach .ai-more { display: block; text-align: center; font-size: 12px; color: var(--primary); padding-bottom: 16px; cursor: pointer; font-weight: 600; }
+
+  /* ===== 小组战报（增强） ===== */
+  .group-ranking .gr-item { cursor: default; }
+  .group-ranking .gr-name .gr-leader { color: var(--red); }
+  .group-ranking .gr-streak { font-size: 11px; color: var(--orange); margin-top: 2px; }
+
+  /* ===== 管理工具 ===== */
+  .admin-tools { display: flex; flex-direction: column; gap: 10px; padding: 16px 20px; }
+  .admin-btn {
+    padding: 13px 16px; border: 1px solid var(--border); background: var(--card);
+    border-radius: 10px; font-size: 14px; font-weight: 600; color: var(--text-2);
+    cursor: pointer; text-align: left; transition: all .2s;
+  }
+  .admin-btn:hover { border-color: var(--primary); color: var(--primary); }
+  .admin-btn.danger { color: var(--red); border-color: #fecaca; }
+  .admin-btn.danger:hover { background: #fef2f2; }
+  #dataWarnInline { padding: 0 20px 16px; }
+
+  /* ===== 响应式 / 移动优先 ===== */
+  @media (max-width: 640px) {
+    body { padding: 10px; }
+    .container { max-width: 100%; }
+    .top-bar { padding: 2px 0 14px; }
+    .brand h1 { font-size: 19px; }
+    .heartbeat-panel { flex-direction: column; text-align: center; }
+    .hb-right { text-align: center; }
+    .hb-live { justify-content: center; }
+    .mycard-top { flex-wrap: wrap; }
+    .btn-learn { width: 100%; margin-top: 4px; }
+    .panel-header { padding: 12px 16px; }
+    .seg-btn { font-size: 13px; padding: 10px 4px; }
+  }
 </style>
 </head>
 <body>
 <div class="container">
   <header class="top-bar">
     <div class="brand">
-      <h1>读书打卡</h1>
+      <h1>📖 读书打卡</h1>
       <span class="sync-badge"><span class="dot"></span> 全员共享</span>
     </div>
     <div class="top-actions">
@@ -356,7 +461,7 @@
   </header>
 
   <div class="token-banner" id="tokenBanner">
-    <span>⚠️ 还未设置打卡令牌，打卡功能需要先设置令牌才能保存数据</span>
+    <span>⚠️ 还未设置学习令牌，学习功能需要先设置令牌才能保存数据</span>
     <button class="set-btn" onclick="openSettings()">设置令牌</button>
   </div>
   <div class="error-banner" id="errorBanner">
@@ -365,31 +470,70 @@
     <button class="retry-btn" onclick="fetchAndRender()">重试</button>
   </div>
   <div class="ai-banner" id="aiBanner">
-    <span>🤖 AI 反馈未配置：管理员请设置共享 AI Key，或普通成员可在设置中输入自己的 Key</span>
+    <span>🤖 AI 教练未配置：管理员请设置共享 AI Key，或普通成员可在设置中输入自己的 Key</span>
     <button class="set-btn" onclick="openSettings()">配置 AI</button>
   </div>
 
-  <section class="panel">
-    <div class="panel-header"><span class="panel-title">今日概览</span></div>
+  <div class="seg">
+    <button class="seg-btn active" id="segHome" onclick="switchView('home')">🏠 今日</button>
+    <button class="seg-btn" id="progressSeg" onclick="switchView('progress')">📋 进度<span class="seg-badge" id="progressBadge" style="display:none"></span></button>
+    <button class="seg-btn hidden" id="adminSeg" onclick="switchView('admin')">🔑 管理</button>
+  </div>
+
+  <!-- 今日视图（成员端） -->
+  <section class="view" id="homeView">
     <div class="welcome-bar" id="welcomeBar" style="display:none"></div>
-    <div class="status-bar" id="statusBar"></div>
-    <div class="group-ranking" id="groupRanking"></div>
+
+    <section class="panel heartbeat-panel">
+      <div class="hb-ring-wrap">
+        <svg class="hb-ring" width="96" height="96" viewBox="0 0 96 96">
+          <circle class="track" cx="48" cy="48" r="40"></circle>
+          <circle class="bar" id="hbBar" cx="48" cy="48" r="40"></circle>
+        </svg>
+        <div class="hb-ring-center">
+          <div class="hb-num"><span id="hbDone">0</span><small>/<span id="hbTotal">0</span></small></div>
+        </div>
+      </div>
+      <div class="hb-right">
+        <div class="hb-title">📈 今日心跳</div>
+        <div class="hb-sub">实时记录每一次学习的脉搏</div>
+        <div class="hb-live"><span class="pulse-dot"></span> 实时同步中</div>
+        <div class="hb-day" id="hbDayInfo"></div>
+      </div>
+    </section>
+
+    <section class="panel mycard">
+      <div class="mycard-top">
+        <div class="mycard-avatar" id="mcAvatar">?</div>
+        <div class="mycard-info">
+          <div class="mycard-name" id="mcName">未设置名字</div>
+          <div class="mycard-streak" id="mcStreak"></div>
+        </div>
+        <button class="btn-learn" id="mcBtn" onclick="onMyLearnClick()">我已学习</button>
+      </div>
+      <div class="mycard-hint" id="mcHint"></div>
+    </section>
+
+    <section class="panel">
+      <div class="panel-header"><span class="panel-title">🏆 小组战报</span></div>
+      <div class="group-ranking" id="groupRanking"></div>
+    </section>
+
+    <section class="panel ai-coach" id="aiCoachPanel">
+      <div class="panel-header"><span class="panel-title">🤖 AI 教练</span></div>
+      <div id="aiCoachBody"></div>
+    </section>
+
+    <section class="panel">
+      <div class="panel-header"><span class="panel-title">📚 学习动态</span></div>
+      <div class="feed" id="feed"></div>
+      <div class="empty-feed" id="emptyFeed">还没有学习记录，点击上方「我已学习」开始今天的学习吧 ~</div>
+    </section>
   </section>
 
-  <section class="panel">
-    <div class="tab-bar">
-      <button class="tab active" id="tabFeed" onclick="switchTab('feed')">
-        📊 打卡动态
-      </button>
-      <button class="tab" id="tabTable" onclick="switchTab('table')">
-        📋 打卡进度 <span class="tab-badge alert" id="tableBadge" style="display:none"></span>
-      </button>
-    </div>
-    <div class="tab-content active" id="feedTab">
-      <div class="feed" id="feed"></div>
-      <div class="empty-feed" id="emptyFeed">还没有打卡记录，点击「打卡进度」标签开始打卡吧 ~</div>
-    </div>
-    <div class="tab-content" id="tableTab">
+  <!-- 进度视图 -->
+  <section class="view" id="progressView" style="display:none">
+    <section class="panel">
       <div class="table-toolbar">
         <label>天数</label>
         <input type="number" id="dayCount" value="7" min="1" max="31">
@@ -397,11 +541,24 @@
       </div>
       <div class="table-wrap"><table id="checkTable"></table></div>
       <div class="summary" id="summary"></div>
-    </div>
+    </section>
+  </section>
+
+  <!-- 管理视图 -->
+  <section class="view" id="adminView" style="display:none">
+    <section class="panel">
+      <div class="panel-header"><span class="panel-title">🔑 管理后台</span></div>
+      <div class="admin-tools">
+        <button class="admin-btn" onclick="openSettings()">⚙️ 设置 · 令牌 · AI 配置</button>
+        <button class="admin-btn" id="batchAiBtn2" onclick="batchAIFeedback()" style="display:none">🤖 批量生成 AI 反馈</button>
+        <button class="admin-btn danger" onclick="confirmReset()">🗑️ 清空所有学习记录</button>
+      </div>
+      <div id="dataWarnInline"></div>
+    </section>
   </section>
 
   <div class="toast-container" id="toastContainer"></div>
-  <div class="footer">📖 读书打卡 <span style="color:#cbd5e1">·</span> v6.3 <span style="color:#cbd5e1">·</span> 专家自检稳定版 · 记录不丢失</div>
+  <div class="footer">📖 读书打卡 <span style="color:#cbd5e1">·</span> v7.0 <span style="color:#cbd5e1">·</span> 设计重构版 · 记录不丢失</div>
   <div id="debugInfo"></div>
 </div>
 
@@ -464,10 +621,11 @@ function updateTokenBanner() {
     banner.classList.add('hidden');
   } else {
     banner.classList.remove('hidden');
-    const msg = !getToken() ? '还未设置打卡令牌' : '还未设置你的名字';
-    banner.querySelector('span').textContent = '⚠️ ' + msg + '，请先完成设置才能打卡';
+    const msg = !getToken() ? '还未设置学习令牌' : '还未设置你的名字';
+    banner.querySelector('span').textContent = '⚠️ ' + msg + '，请先完成设置才能学习';
   }
   updateAIBanner();
+  refreshAdminSeg();
 }
 
 function updateAIBanner() {
@@ -477,11 +635,11 @@ function updateAIBanner() {
   if (config.key) {
     banner.classList.add('ok');
     banner.classList.remove('hidden');
-    banner.querySelector('span').textContent = '✅ AI 反馈已配置（' + (localStorage.getItem('reading_checkin_ai_key') ? '个人 Key' : '团队共享 Key') + '）';
+    banner.querySelector('span').textContent = '✅ AI 教练已配置（' + (localStorage.getItem('reading_checkin_ai_key') ? '个人 Key' : '团队共享 Key') + '）';
     banner.querySelector('.set-btn').textContent = '修改';
   } else {
     banner.classList.remove('ok', 'hidden');
-    banner.querySelector('span').textContent = '🤖 AI 反馈未配置：管理员请设置共享 AI Key，或普通成员可在设置中输入自己的 Key';
+    banner.querySelector('span').textContent = '🤖 AI 教练未配置：管理员请设置共享 AI Key，或普通成员可在设置中输入自己的 Key';
     banner.querySelector('.set-btn').textContent = '配置 AI';
   }
 }
@@ -495,12 +653,12 @@ function openSettings() {
     <div class="modal-overlay" id="settingsOverlay">
       <div class="modal settings-modal">
         <h3>⚙️ 设置</h3>
-        <div class="hint">配置打卡令牌和身份信息</div>
+        <div class="hint">配置学习令牌和身份信息</div>
         
         <label style="font-size:13px;color:#555;display:block;margin-bottom:4px">我的名字</label>
         <input type="text" id="userInput" value="${currentUser}" placeholder="输入你的名字（如 Bob）" style="width:100%;padding:10px 12px;border:1px solid #ddd;border-radius:8px;font-size:14px;margin-bottom:12px;outline:none">
         
-        <label style="font-size:13px;color:#555;display:block;margin-bottom:4px">打卡令牌</label>
+        <label style="font-size:13px;color:#555;display:block;margin-bottom:4px">学习令牌</label>
         <input type="password" id="tokenInput" value="${currentToken}" placeholder="粘贴 GitHub Token（以 ghp_ 开头）">
         
         <div style="margin-top:12px;padding:10px 12px;background:#f8f9fa;border-radius:8px;font-size:13px">
@@ -533,7 +691,7 @@ function openSettings() {
           
           <label style="display:flex;align-items:center;gap:8px;font-size:12px;color:#888;cursor:pointer">
             <input type="checkbox" id="aiAutoToggle" ${localStorage.getItem('reading_checkin_ai_auto') !== 'false' ? 'checked' : ''} style="width:14px;height:14px">
-            打卡后自动生成 AI 反馈
+            学习后自动生成 AI 反馈
           </label>
           <div class="hint" style="margin-top:6px;font-size:11px">
             DeepSeek 注册获取 Key：<a href="https://platform.deepseek.com" target="_blank">platform.deepseek.com</a>（非常便宜，几块钱用很久）
@@ -547,7 +705,7 @@ function openSettings() {
           3. 点击底部 "Generate token"<br>
           4. 复制生成的 token，粘贴到上方输入框<br>
           5. 点击保存即可<br>
-          <span style="color:#ef4444">⚠️ 注意：如果没有勾选 repo 权限，图片将无法上传，打卡会失败！</span>
+          <span style="color:#ef4444">⚠️ 注意：如果没有勾选 repo 权限，图片将无法上传，学习会失败！</span>
         </div>
         <div class="modal-actions">
           <button class="btn btn-cancel" onclick="closeSettings()">取消</button>
@@ -617,6 +775,7 @@ function saveSettings() {
   
   closeSettings();
   updateTokenBanner();
+  refreshAdminSeg();
   fetchAndRender();
 }
 
@@ -1072,7 +1231,7 @@ async function generateAIFeedback(name, text, image) {
 }
 
 async function requestAIFeedback(name, day) {
-  if (!getToken()) { alert('请先设置打卡令牌（GitHub Token）才能保存 AI 反馈'); openSettings(); return; }
+  if (!getToken()) { alert('请先设置学习令牌（GitHub Token）才能保存 AI 反馈'); openSettings(); return; }
   const rec = cachedRecords.find(r => r.key === name + '_' + day);
   if (!rec || (!rec.text && !rec.image)) return;
 
@@ -1102,7 +1261,7 @@ async function requestAIFeedback(name, day) {
 }
 
 async function batchAIFeedback() {
-  if (!getToken()) { alert('请先设置打卡令牌（GitHub Token）才能生成 AI 反馈'); openSettings(); return; }
+  if (!getToken()) { alert('请先设置学习令牌（GitHub Token）才能生成 AI 反馈'); openSettings(); return; }
   const config = getAIConfig();
   if (!config.key) {
     alert('请先在设置中配置 AI API Key');
@@ -1112,7 +1271,7 @@ async function batchAIFeedback() {
 
   const pending = cachedRecords.filter(r => (r.text || r.image) && !r.feedback);
   if (pending.length === 0) {
-    alert('所有打卡记录都已有 AI 反馈啦 🎉');
+    alert('所有学习记录都已有 AI 反馈啦 🎉');
     return;
   }
 
@@ -1270,7 +1429,7 @@ function openModal(name, day) {
       });
     } else {
       // 没有记录，提示不能打卡
-      alert('这是 ' + name + ' 的格子，你只能在自己的格子上打卡哦~\n\n你的名字是：' + (currentUser || '未设置') + '\n如需修改，请到「设置」中更改你的名字。');
+      alert('这是 ' + name + ' 的格子，你只能在自己的格子上学习哦~\n\n你的名字是：' + (currentUser || '未设置') + '\n如需修改，请到「设置」中更改你的名字。');
     }
     return;
   }
@@ -1282,8 +1441,8 @@ function openModal(name, day) {
     <div class="modal-overlay" id="modalOverlay">
       <div class="modal">
         <h3>${name} · Day ${day}</h3>
-        <div class="hint">${isEditing ? '编辑打卡内容' : '记录你的读书心得'}${admin && currentUser !== name ? ' · 🔑 管理员操作' : ''}</div>
-        <textarea id="modalText" placeholder="今天读了什么书？有什么收获？">${existing ? escapeHtml(existing.text || '') : ''}</textarea>
+        <div class="hint">${isEditing ? '编辑学习内容' : '记录你的学习心得'}${admin && currentUser !== name ? ' · 🔑 管理员操作' : ''}</div>
+        <textarea id="modalText" placeholder="今天学习了什么？有什么收获？">${existing ? escapeHtml(existing.text || '') : ''}</textarea>
         <div class="file-row">
           <label class="upload-btn">
             📷 ${existing && existing.image ? '更换图片' : '添加图片'}
@@ -1294,7 +1453,7 @@ function openModal(name, day) {
         <div class="modal-actions">
           ${isEditing ? '<button class="btn btn-danger" style="margin-right:auto" onclick="deleteFromModal()">🗑️ 删除</button>' : ''}
           <button class="btn btn-cancel" onclick="closeModal()">取消</button>
-          <button class="btn btn-submit" onclick="submitCheckin()">${isEditing ? '✅ 更新' : '✅ 打卡'}</button>
+          <button class="btn btn-submit" onclick="submitCheckin()">${isEditing ? '✅ 更新学习' : '✅ 我已学习'}</button>
         </div>
       </div>
     </div>
@@ -1308,7 +1467,7 @@ async function deleteFromModal() {
   if (!modalTarget) return;
   const name = modalTarget.name;
   const day = modalTarget.day;
-  if (!confirm(`确认删除 ${name} Day ${day} 的打卡记录？`)) return;
+  if (!confirm(`确认删除 ${name} Day ${day} 的学习记录？`)) return;
   closeModal();
   pendingImage = null;
   
@@ -1357,7 +1516,7 @@ async function submitCheckin() {
   if (!text && !pendingImage) { alert('至少填写一段心得或上传一张图片'); return; }
 
   if (!getToken()) {
-    alert('请先设置打卡令牌！点击页面顶部的"设置令牌"按钮。');
+    alert('请先设置学习令牌！点击页面顶部的"设置令牌"按钮。');
     return;
   }
 
@@ -1367,7 +1526,7 @@ async function submitCheckin() {
 
   // 姓名校验：不在成员名单里直接拦截，防止产生孤儿记录
   if (!ALL_MEMBERS.includes(targetName)) {
-    alert('姓名「' + targetName + '」不在成员名单中，无法打卡。\n请确认设置中的名字是否与分组名单一致；如需新增成员，请联系管理员。');
+    alert('姓名「' + targetName + '」不在成员名单中，无法学习。\n请确认设置中的名字是否与分组名单一致；如需新增成员，请联系管理员。');
     return;
   }
 
@@ -1412,7 +1571,7 @@ async function submitCheckin() {
         } else {
           console.error('AI 反馈生成失败:', result.message);
           // AI 失败不影响打卡结果，但保存错误原因到 loading 提示
-          loadingEl.querySelector('.streak-msg').textContent = '打卡已保存，AI 反馈未生成';
+          loadingEl.querySelector('.streak-msg').textContent = '学习已保存，AI 反馈未生成';
           await new Promise(r => setTimeout(r, 1500));
         }
       } catch (aiErr) {
@@ -1430,7 +1589,7 @@ async function submitCheckin() {
     showToast(targetName, targetDay);
   } catch (e) {
     document.getElementById('loadingOverlay').remove();
-    console.error('打卡保存失败:', e);
+    console.error('学习保存失败:', e);
     alert('保存失败: ' + e.message + '\n\n请尝试：\n1. 检查令牌是否正确\n2. 刷新页面重试\n3. 如果持续失败，截图浏览器控制台(F12)的错误信息');
   }
 }
@@ -1506,7 +1665,7 @@ function showStreakPopup(name, streak) {
 }
 
 // ===== Table rendering =====
-const PAGE_VERSION = 'v6.3';
+const PAGE_VERSION = 'v7.0';
 
 // v6.2 数据接近上限预警：仅管理员可见，提示归档/重置，避免某天数据撞 1MB 导致全员打卡失败
 function checkDataSizeWarning() {
@@ -1569,11 +1728,11 @@ async function fetchAndRender() {
     
     document.getElementById('debugInfo').innerHTML = '✅ ' + PAGE_VERSION + ' · ' + dataSource + ' · ' + cachedRecords.length + ' 条 · ' + (getCurrentUser() || '未设置') + (isAdmin() ? ' · 🔑管理员' : '') + ' · ' + new Date().toLocaleTimeString();
     
-    // 显示/隐藏批量AI按钮
+    // 显示/隐藏批量AI按钮（进度视图 + 管理视图）
     const aiConfig = getAIConfig();
+    const pendingCount = cachedRecords.filter(r => (r.text || r.image) && !r.feedback).length;
     const batchBtn = document.getElementById('batchAiBtn');
     if (batchBtn) {
-      const pendingCount = cachedRecords.filter(r => (r.text || r.image) && !r.feedback).length;
       if (aiConfig.key && pendingCount > 0) {
         batchBtn.style.display = '';
         batchBtn.textContent = `🤖 批量 AI 反馈（${pendingCount}条待处理）`;
@@ -1584,6 +1743,19 @@ async function fetchAndRender() {
         batchBtn.style.display = 'none';
       }
     }
+    const batchBtn2 = document.getElementById('batchAiBtn2');
+    if (batchBtn2) {
+      if (aiConfig.key && pendingCount > 0) {
+        batchBtn2.style.display = '';
+        batchBtn2.textContent = `🤖 批量 AI 反馈（${pendingCount}条待处理）`;
+      } else if (aiConfig.key) {
+        batchBtn2.style.display = '';
+        batchBtn2.textContent = '🤖 批量 AI 反馈';
+      } else {
+        batchBtn2.style.display = 'none';
+      }
+    }
+    refreshAdminSeg();
   } catch (e) {
     console.error('获取数据失败:', e);
     cachedRecords = [];
@@ -1621,7 +1793,7 @@ async function fetchAndRender() {
         const bar = document.getElementById('welcomeBar');
         bar.style.display = 'flex';
         bar.innerHTML = `
-          <span>👋 你离开期间，<strong>${names.length}</strong> 人完成了 <strong>${recentRecords.length}</strong> 次打卡</span>
+          <span>👋 你离开期间，<strong>${names.length}</strong> 人完成了 <strong>${recentRecords.length}</strong> 次学习</span>
           <span style="font-size:11px;opacity:0.7;">${names.slice(0,5).join('、')}${names.length > 5 ? '...等' : ''}</span>
           <button class="wb-close" onclick="this.parentElement.style.display='none'">✕</button>
         `;
@@ -1653,53 +1825,31 @@ function getTodayCheckedIn(records) {
   return set;
 }
 
-// ===== 打卡状态一览条 =====
-function renderStatusBar(records) {
-  const bar = document.getElementById('statusBar');
-  const todayChecked = getTodayCheckedIn(records);
-  const allMembers = [];
-  groups.forEach(g => g.members.forEach(m => allMembers.push(m)));
-  const checkedCount = allMembers.filter(m => todayChecked.has(m)).length;
-  const total = allMembers.length;
+// （今日状态已由「今日心跳」面板呈现，原 statusBar 已移除）
 
-  let chips = '';
-  allMembers.forEach(name => {
-    const done = todayChecked.has(name);
-    const streak = calcStreak(name);
-    const leaderCls = LEADERS.has(name) ? ' leader' : '';
-    const streakBadge = streak > 0 ? `<span class="streak-num">🔥${streak}</span>` : '';
-    chips += `<span class="status-chip ${done ? 'done' : 'undone'}${leaderCls}">${escapeHtml(name)}${streakBadge}</span>`;
-  });
-
-  bar.innerHTML = `
-    <span class="status-label">📊 今日打卡</span>
-    <span class="status-count"><span class="done">${checkedCount}</span>/${total}</span>
-    ${chips}
-  `;
-}
-
-// ===== 小组今日完成率排行 =====
+// ===== 小组今日战报（完成率排行 + 最佳连击） =====
 function renderGroupRanking(records) {
   const container = document.getElementById('groupRanking');
+  if (!container) return;
   const todayChecked = getTodayCheckedIn(records);
-  
+
   const groupStats = groups.map(g => {
     const checked = g.members.filter(m => todayChecked.has(m)).length;
     const total = g.members.length;
     const rate = total > 0 ? checked / total : 0;
-    return { name: g.name, checked, total, rate };
+    const bestStreak = Math.max(0, ...g.members.map(m => calcStreak(m)));
+    const leader = g.members.find(m => LEADERS.has(m)) || '';
+    return { name: g.name, checked, total, rate, bestStreak, leader };
   }).sort((a, b) => b.rate - a.rate);
-  
+
   const rankEmojis = ['🥇', '🥈', '🥉', '4️⃣', '5️⃣'];
-  
+
   container.innerHTML = `
-    <div class="gr-title">🏆 小组今日完成率排行</div>
     <div class="gr-list">
       ${groupStats.map((gs, i) => {
         const pct = Math.round(gs.rate * 100);
         const barCls = pct >= 80 ? 'high' : pct >= 40 ? 'mid' : 'low';
         let rankDisplay = rankEmojis[i] || (i + 1);
-        // 如果完成率相同，用相同排名标记
         if (i > 0 && gs.rate === groupStats[i-1].rate) {
           rankDisplay = rankEmojis[i-1] || (i);
         }
@@ -1707,11 +1857,11 @@ function renderGroupRanking(records) {
           <div class="gr-item">
             <div class="gr-rank">${rankDisplay}</div>
             <div class="gr-info">
-              <div class="gr-name">${escapeHtml(gs.name)}</div>
+              <div class="gr-name"><span class="${LEADERS.has(gs.leader) ? 'gr-leader' : ''}">${escapeHtml(gs.name)}</span>${gs.leader ? ' · 👑' + escapeHtml(gs.leader) : ''}</div>
               <div class="gr-bar-wrap">
                 <div class="gr-bar ${barCls}" style="width:${pct}%"></div>
               </div>
-              <div class="gr-stat"><strong>${gs.checked}/${gs.total}</strong> · ${pct}%</div>
+              <div class="gr-stat"><strong>${gs.checked}/${gs.total}</strong> · ${pct}%${gs.bestStreak > 0 ? ' · 🔥' + gs.bestStreak : ''}</div>
             </div>
           </div>`;
       }).join('')}
@@ -1730,7 +1880,7 @@ function showToast(name, day) {
     <div class="toast-avatar">${initial}</div>
     <div class="toast-body">
       <div class="toast-name">${escapeHtml(name)}</div>
-      <div class="toast-day">刚完成了 Day ${day} 打卡 🎉</div>
+      <div class="toast-day">刚完成了 Day ${day} 学习 🎉</div>
     </div>
   `;
   container.appendChild(toast);
@@ -1746,74 +1896,39 @@ function showToast(name, day) {
   if (toasts.length > 5) toasts[0].remove();
 }
 
-function switchTab(tab) {
-  document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
-  document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
-  if (tab === 'feed') {
-    document.getElementById('tabFeed').classList.add('active');
-    document.getElementById('feedTab').classList.add('active');
-  } else {
-    document.getElementById('tabTable').classList.add('active');
-    document.getElementById('tableTab').classList.add('active');
+function getAllMembers() {
+  const all = [];
+  groups.forEach(g => g.members.forEach(m => all.push(m)));
+  return all;
+}
+function switchView(view) {
+  document.querySelectorAll('.seg-btn').forEach(b => b.classList.remove('active'));
+  document.getElementById('homeView').style.display = 'none';
+  document.getElementById('progressView').style.display = 'none';
+  document.getElementById('adminView').style.display = 'none';
+  if (view === 'home') {
+    document.getElementById('homeView').style.display = '';
+    document.getElementById('segHome').classList.add('active');
+  } else if (view === 'progress') {
+    document.getElementById('progressView').style.display = '';
+    document.getElementById('progressSeg').classList.add('active');
+  } else if (view === 'admin') {
+    document.getElementById('adminView').style.display = '';
+    document.getElementById('adminSeg').classList.add('active');
   }
+  window.scrollTo({ top: 0, behavior: 'smooth' });
 }
 
 function renderAll(allRecords) {
-  const days = parseInt(document.getElementById('dayCount').value) || 7;
-  const recordMap = {};
-  allRecords.forEach(r => { recordMap[r.key] = r; });
-
-  const table = document.getElementById('checkTable');
-  let html = '<thead><tr><th class="col-name">姓名</th>';
-  for (let d = 1; d <= days; d++) html += `<th>Day ${d}</th>`;
-  html += '</tr></thead><tbody>';
-
-  groups.forEach(group => {
-    html += `<tr class="group-header"><td colspan="${days + 1}">${escapeHtml(group.name)}</td></tr>`;
-    group.members.forEach(name => {
-      const streak = calcStreak(name);
-      const streakHtml = streak > 0
-        ? `<span class="streak-badge active">🔥${streak}</span>`
-        : `<span class="streak-badge zero">🔥0</span>`;
-      html += '<tr>';
-      html += `<td class="col-name${LEADERS.has(name) ? ' leader' : ''}">${escapeHtml(name)}${streakHtml}</td>`;
-      for (let d = 1; d <= days; d++) {
-        const key = `${name}_${d}`;
-        const rec = recordMap[key];
-        const cls = rec ? (rec.image ? 'cell cell-img checked' : 'cell checked') : 'cell';
-        const icon = rec ? '✓' : '+';
-        html += `<td><span class="${cls}" data-name="${escapeHtml(name)}" data-day="${d}">${icon}</span></td>`;
-      }
-      html += '</tr>';
-    });
-  });
-
-  html += '</tbody>';
-  table.innerHTML = html;
-
-  table.querySelectorAll('.cell').forEach(cell => {
-    cell.addEventListener('click', () => {
-      openModal(cell.dataset.name, parseInt(cell.dataset.day));
-    });
-  });
-
-  document.getElementById('summary').textContent = `共 ${allRecords.length} 人次已打卡`;
-  renderFeed(allRecords);
-  renderStatusBar(allRecords);
+  // 今日视图（成员端）
+  renderTodayHeartbeat(allRecords);
+  renderMyLearning(allRecords);
+  renderAICoach(allRecords);
   renderGroupRanking(allRecords);
-
-  // 更新「打卡进度」Tab 上的未打卡人数徽章
-  const todayChecked = getTodayCheckedIn(allRecords);
-  const allMembers = [];
-  groups.forEach(g => g.members.forEach(m => allMembers.push(m)));
-  const uncheckedCount = allMembers.filter(m => !todayChecked.has(m)).length;
-  const badge = document.getElementById('tableBadge');
-  if (badge && uncheckedCount > 0) {
-    badge.style.display = '';
-    badge.textContent = uncheckedCount + '人未打卡';
-  } else if (badge) {
-    badge.style.display = 'none';
-  }
+  // 进度视图
+  renderTable(allRecords);
+  // 学习动态
+  renderFeed(allRecords);
 }
 
 function renderFeed(records) {
@@ -1869,13 +1984,176 @@ function renderFeed(records) {
   }).join('');
 }
 
+// ===== 今日心跳 =====
+function renderTodayHeartbeat(records) {
+  const todayChecked = getTodayCheckedIn(records);
+  const all = getAllMembers();
+  const done = all.filter(m => todayChecked.has(m)).length;
+  const total = all.length;
+  const pct = total > 0 ? done / total : 0;
+  const r = 40, circ = 2 * Math.PI * r;
+  const bar = document.getElementById('hbBar');
+  if (bar) {
+    bar.style.strokeDasharray = circ;
+    bar.style.strokeDashoffset = circ * (1 - pct);
+  }
+  const doneEl = document.getElementById('hbDone');
+  const totalEl = document.getElementById('hbTotal');
+  if (doneEl) doneEl.textContent = done;
+  if (totalEl) totalEl.textContent = total;
+  const dayInfo = document.getElementById('hbDayInfo');
+  if (dayInfo) {
+    const maxDay = records.reduce((mx, rr) => Math.max(mx, rr.day || 0), 0);
+    dayInfo.innerHTML = '全队已累计学习到 <b>Day ' + maxDay + '</b>';
+  }
+}
+
+// ===== 我的学习（一键） =====
+function renderMyLearning(records) {
+  const currentUser = getCurrentUser();
+  const avatar = document.getElementById('mcAvatar');
+  const nameEl = document.getElementById('mcName');
+  const streakEl = document.getElementById('mcStreak');
+  const btn = document.getElementById('mcBtn');
+  const hint = document.getElementById('mcHint');
+  if (!currentUser) {
+    if (avatar) avatar.textContent = '?';
+    if (nameEl) nameEl.textContent = '尚未设置名字';
+    if (streakEl) streakEl.textContent = '';
+    if (btn) { btn.textContent = '去设置'; btn.className = 'btn-learn'; btn.onclick = openSettings; }
+    if (hint) { hint.textContent = '请先在「设置」中填写你的名字，才能记录学习'; hint.className = 'mycard-hint warn'; }
+    return;
+  }
+  const initial = currentUser.charAt(0).toUpperCase();
+  const myRecs = records.filter(r => r.name === currentUser);
+  const maxDay = myRecs.reduce((mx, r) => Math.max(mx, r.day || 0), 0);
+  const nextDay = maxDay + 1;
+  const streak = calcStreak(currentUser);
+  const checkedToday = getTodayCheckedIn(records).has(currentUser);
+  if (avatar) avatar.textContent = initial;
+  if (nameEl) nameEl.textContent = currentUser + (LEADERS.has(currentUser) ? ' 👑' : '');
+  if (streakEl) streakEl.innerHTML = streak > 0 ? '🔥 连续学习 <b>' + streak + '</b> 天' : '还没有连击，今天开始吧';
+  if (btn) {
+    btn.onclick = () => onMyLearnClick();
+    if (checkedToday) {
+      btn.textContent = '继续学习 (Day ' + nextDay + ')';
+      btn.className = 'btn-learn done';
+      if (hint) { hint.textContent = '今天已完成 Day ' + maxDay + ' 学习 ✅ 想多记一条也可以~'; hint.className = 'mycard-hint'; }
+    } else {
+      btn.textContent = '我已学习 (Day ' + nextDay + ')';
+      btn.className = 'btn-learn';
+      if (hint) { hint.textContent = '今天还没记录，点一下，30 秒完成一次学习'; hint.className = 'mycard-hint warn'; }
+    }
+  }
+}
+function onMyLearnClick() {
+  const currentUser = getCurrentUser();
+  if (!currentUser) { openSettings(); return; }
+  const myRecs = cachedRecords.filter(r => r.name === currentUser);
+  const maxDay = myRecs.reduce((mx, r) => Math.max(mx, r.day || 0), 0);
+  openModal(currentUser, maxDay + 1);
+}
+
+// ===== AI 教练（首页高光） =====
+function renderAICoach(records) {
+  const body = document.getElementById('aiCoachBody');
+  if (!body) return;
+  const withFeedback = records.filter(r => r.feedback).sort((a, b) => b.time - a.time);
+  if (withFeedback.length > 0) {
+    const r = withFeedback[0];
+    body.innerHTML = `
+      <div class="ai-card">
+        <div class="ai-head">🤖 教练点评</div>
+        <div class="ai-name">${escapeHtml(r.name)} · Day ${r.day}</div>
+        <div class="ai-text">${escapeHtml(r.feedback)}</div>
+      </div>
+      <span class="ai-more" onclick="switchView('progress')">查看全部进度 →</span>`;
+  } else {
+    const cfg = getAIConfig();
+    const msg = cfg.key
+      ? '🤖 你的专属 AI 教练已就位，每次学习后都会给你一段温暖的反馈。'
+      : '🤖 配置 AI Key 后，教练会自动点评你的每一条学习记录。点右上角「设置」即可开启。';
+    body.innerHTML = `<div class="ai-empty">${msg}</div>`;
+  }
+}
+
+// ===== 表格（进度视图） =====
+function renderTable(records) {
+  const days = parseInt(document.getElementById('dayCount').value) || 7;
+  const recordMap = {};
+  records.forEach(r => { recordMap[r.key] = r; });
+  const table = document.getElementById('checkTable');
+  if (!table) return;
+  let html = '<thead><tr><th class="col-name">姓名</th>';
+  for (let d = 1; d <= days; d++) html += `<th>Day ${d}</th>`;
+  html += '</tr></thead><tbody>';
+
+  groups.forEach(group => {
+    html += `<tr class="group-header"><td colspan="${days + 1}">${escapeHtml(group.name)}</td></tr>`;
+    group.members.forEach(name => {
+      const streak = calcStreak(name);
+      const streakHtml = streak > 0
+        ? `<span class="streak-badge active">🔥${streak}</span>`
+        : `<span class="streak-badge zero">🔥0</span>`;
+      html += '<tr>';
+      html += `<td class="col-name${LEADERS.has(name) ? ' leader' : ''}">${escapeHtml(name)}${streakHtml}</td>`;
+      for (let d = 1; d <= days; d++) {
+        const key = `${name}_${d}`;
+        const rec = recordMap[key];
+        const cls = rec ? (rec.image ? 'cell cell-img checked' : 'cell checked') : 'cell';
+        const icon = rec ? '✓' : '+';
+        html += `<td><span class="${cls}" data-name="${escapeHtml(name)}" data-day="${d}">${icon}</span></td>`;
+      }
+      html += '</tr>';
+    });
+  });
+  html += '</tbody>';
+  table.innerHTML = html;
+
+  table.querySelectorAll('.cell').forEach(cell => {
+    cell.addEventListener('click', () => {
+      openModal(cell.dataset.name, parseInt(cell.dataset.day));
+    });
+  });
+  const summaryEl = document.getElementById('summary');
+  if (summaryEl) summaryEl.textContent = `共 ${records.length} 人次已学习`;
+  updateProgressBadge(records);
+}
+function updateProgressBadge(records) {
+  const todayChecked = getTodayCheckedIn(records);
+  const all = getAllMembers();
+  const unchecked = all.filter(m => !todayChecked.has(m)).length;
+  const badge = document.getElementById('progressBadge');
+  if (badge) {
+    if (unchecked > 0) { badge.style.display = ''; badge.textContent = unchecked + '人未学习'; }
+    else { badge.style.display = 'none'; }
+  }
+}
+
+// ===== 管理：清空 =====
+async function confirmReset() {
+  if (!confirm('确认清空所有学习记录？此操作不可恢复！')) return;
+  if (!getToken()) { alert('请先设置令牌'); return; }
+  try {
+    await apiReset();
+    cachedRecords = [];
+    renderAll(cachedRecords);
+    alert('已清空所有记录');
+    switchView('home');
+  } catch (e) { alert('清空失败: ' + e.message); }
+}
+function refreshAdminSeg() {
+  const adminSeg = document.getElementById('adminSeg');
+  if (adminSeg) adminSeg.style.display = isAdmin() ? '' : 'none';
+}
+
 async function delRecord(name, day) {
   // 权限检查
   if (!isAdmin() && getCurrentUser() !== name) {
-    alert('你只能删除自己的打卡记录');
+    alert('你只能删除自己的学习记录');
     return;
   }
-  if (!confirm(`确认删除 ${name} Day ${day} 的打卡记录？`)) return;
+  if (!confirm(`确认删除 ${name} Day ${day} 的学习记录？`)) return;
   if (!getToken()) { alert('请先设置令牌'); return; }
   try {
     await apiDelete(name, day);
@@ -1900,11 +2178,11 @@ function exportData() {
   const text = records.map(r => {
     return `--- ${r.name} · Day ${r.day} · ${new Date(r.time).toLocaleString('zh-CN')} ---\n${r.text || '(无文字)'}\n${r.image ? '[含图片]' : ''}`;
   }).join('\n\n');
-  const blob = new Blob([text || '暂无打卡记录'], { type: 'text/plain;charset=utf-8' });
+  const blob = new Blob([text || '暂无学习记录'], { type: 'text/plain;charset=utf-8' });
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
   a.href = url;
-  a.download = '读书打卡导出.txt';
+  a.download = '读书学习记录导出.txt';
   a.click();
   URL.revokeObjectURL(url);
 }
