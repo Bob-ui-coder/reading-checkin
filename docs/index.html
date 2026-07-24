@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<!-- v6.1 - 2026-07-24 修复记录消失(merge替代replace) + 天数持久化 -->
+<!-- v6.2 - 2026-07-24 专家自检修复：移除500KB硬拦截+AI超时+并发校验+XSS防御+数据预警 -->
 <html lang="zh-CN">
 <head>
 <meta charset="UTF-8">
@@ -401,7 +401,7 @@
   </section>
 
   <div class="toast-container" id="toastContainer"></div>
-  <div class="footer">📖 读书打卡 <span style="color:#cbd5e1">·</span> v6.1 <span style="color:#cbd5e1">·</span> 数据安全版 · 记录不丢失</div>
+  <div class="footer">📖 读书打卡 <span style="color:#cbd5e1">·</span> v6.2 <span style="color:#cbd5e1">·</span> 专家自检稳定版 · 记录不丢失</div>
   <div id="debugInfo"></div>
 </div>
 
@@ -717,9 +717,12 @@ function buildGistContent(records) {
   const obj = { records };
   if (sharedAIConfig && sharedAIConfig.key) obj.aiConfig = sharedAIConfig;
   const content = JSON.stringify(obj, null, 2);
-  // 数据大小保护：超过 500KB 说明可能有 base64 图片混入，拒绝保存
-  if (content.length > 500000) {
-    throw new Error('数据异常膨胀（' + Math.round(content.length / 1024) + 'KB），可能包含未上传的 base64 图片。请点击页面「强制刷新」后重试，或联系管理员清理。');
+  // v6.2 数据大小保护（软预警，绝不阻断保存）：
+  // base64 已在保存前由 sanitizeRecordsBeforeSave 剥离，这里不再硬性拒绝，
+  // 否则一旦数据接近 500KB 会让全员打卡失败。仅当接近 Gist 1MB 上限时预警，
+  // 真正超限由 Gist 接口返回错误（由调用方捕获并提示），不会静默丢失。
+  if (content.length > 800000) {
+    console.warn('⚠️ 数据已接近 Gist 1MB 上限（' + Math.round(content.length / 1024) + 'KB），建议管理员归档旧数据或重置，详见页面顶部预警。');
   }
   return content;
 }
@@ -864,7 +867,25 @@ async function apiSaveRecords(records, mode) {
         })
       });
 
-      if (patchRes.ok) return cleaned;
+      if (patchRes.ok) {
+        // v6.2 轻量并发校验：写入后立即回读，确认我们这批记录确实落地。
+        // Gist 无乐观锁，理论上最后写入者会覆盖他人；此处做 best-effort 补偿，
+        // 仅在我们写入的记录“丢失”时才重试，无并发时不增加额外 API 调用。
+        try {
+          const verify = await readFullGistData(token);
+          const vkeys = new Set((verify.records || []).map(r => r.key));
+          const wanted = new Set(records.map(r => r.key));
+          const lost = [...wanted].some(k => !vkeys.has(k));
+          if (lost && attempt < 2) {
+            console.warn('⚠️ 检测到并发写入可能覆盖了本记录，正在重试...');
+            await new Promise(r => setTimeout(r, 500));
+            continue;
+          }
+        } catch (ve) {
+          // 校验读取失败不阻断，依赖 60s 轮询自愈
+        }
+        return cleaned;
+      }
       if (patchRes.status === 409 && attempt < 2) {
         await new Promise(r => setTimeout(r, 500 * (attempt + 1)));
         continue;
@@ -999,12 +1020,16 @@ async function generateAIFeedback(name, text, image) {
   }
 
   try {
+    // v6.2: 25 秒超时，防止 AI 接口卡死导致加载遮罩一直转
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 25000);
     const res = await fetch(config.baseUrl + '/chat/completions', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
         'Authorization': 'Bearer ' + config.key
       },
+      signal: controller.signal,
       body: JSON.stringify({
         model: config.model,
         messages: [
@@ -1015,6 +1040,7 @@ async function generateAIFeedback(name, text, image) {
         temperature: 0.8
       })
     });
+    clearTimeout(timeoutId);
 
     if (!res.ok) {
       const err = await res.json().catch(() => ({}));
@@ -1032,6 +1058,9 @@ async function generateAIFeedback(name, text, image) {
     return { ok: true, feedback: data.choices[0].message.content.trim() };
   } catch (e) {
     console.error('AI 反馈生成失败:', e);
+    if (e.name === 'AbortError') {
+      return { ok: false, error: 'timeout', message: 'AI 接口响应超时（25秒），请稍后重试' };
+    }
     return { ok: false, error: 'network', message: '网络异常，请检查网络后重试' };
   }
 }
@@ -1465,7 +1494,23 @@ function showStreakPopup(name, streak) {
 }
 
 // ===== Table rendering =====
-const PAGE_VERSION = 'v6.1';
+const PAGE_VERSION = 'v6.2';
+
+// v6.2 数据接近上限预警：仅管理员可见，提示归档/重置，避免某天数据撞 1MB 导致全员打卡失败
+function checkDataSizeWarning() {
+  const old = document.getElementById('dataWarnBar');
+  if (old) old.remove();
+  const sizeKB = Math.round((JSON.stringify({ records: cachedRecords, aiConfig: sharedAIConfig }) || '').length / 1024);
+  if (sizeKB > 800 && isAdmin()) {
+    const bar = document.createElement('div');
+    bar.id = 'dataWarnBar';
+    bar.style.cssText = 'border-radius:10px;padding:12px 16px;margin-bottom:12px;font-size:13px;display:flex;align-items:center;justify-content:space-between;gap:12px;background:#fff7ed;border:1px solid #fed7aa;color:#9a3412;';
+    bar.innerHTML = '<span>⚠️ <strong>数据存储已达 ' + sizeKB + 'KB</strong>（Gist 上限约 1000KB）。建议尽快归档旧数据或重置，否则接近上限时打卡可能失败。</span>';
+    const container = document.querySelector('.container');
+    if (container) container.insertBefore(bar, container.firstChild);
+  }
+}
+
 async function fetchAndRender() {
   try {
     const prevRecords = cachedRecords;
@@ -1502,6 +1547,9 @@ async function fetchAndRender() {
     try {
       localStorage.setItem('reading_checkin_backup', JSON.stringify(cachedRecords));
     } catch (e) { /* localStorage 满了 */ }
+    
+    // v6.2 数据接近 1MB 上限时给管理员预警
+    checkDataSizeWarning();
     
     // 隐藏错误提示
     const errBanner = document.getElementById('errorBanner');
@@ -1608,7 +1656,7 @@ function renderStatusBar(records) {
     const streak = calcStreak(name);
     const leaderCls = LEADERS.has(name) ? ' leader' : '';
     const streakBadge = streak > 0 ? `<span class="streak-num">🔥${streak}</span>` : '';
-    chips += `<span class="status-chip ${done ? 'done' : 'undone'}${leaderCls}">${name}${streakBadge}</span>`;
+    chips += `<span class="status-chip ${done ? 'done' : 'undone'}${leaderCls}">${escapeHtml(name)}${streakBadge}</span>`;
   });
 
   bar.innerHTML = `
@@ -1647,7 +1695,7 @@ function renderGroupRanking(records) {
           <div class="gr-item">
             <div class="gr-rank">${rankDisplay}</div>
             <div class="gr-info">
-              <div class="gr-name">${gs.name}</div>
+              <div class="gr-name">${escapeHtml(gs.name)}</div>
               <div class="gr-bar-wrap">
                 <div class="gr-bar ${barCls}" style="width:${pct}%"></div>
               </div>
@@ -1709,14 +1757,14 @@ function renderAll(allRecords) {
   html += '</tr></thead><tbody>';
 
   groups.forEach(group => {
-    html += `<tr class="group-header"><td colspan="${days + 1}">${group.name}</td></tr>`;
+    html += `<tr class="group-header"><td colspan="${days + 1}">${escapeHtml(group.name)}</td></tr>`;
     group.members.forEach(name => {
       const streak = calcStreak(name);
       const streakHtml = streak > 0
         ? `<span class="streak-badge active">🔥${streak}</span>`
         : `<span class="streak-badge zero">🔥0</span>`;
       html += '<tr>';
-      html += `<td class="col-name${LEADERS.has(name) ? ' leader' : ''}">${name}${streakHtml}</td>`;
+      html += `<td class="col-name${LEADERS.has(name) ? ' leader' : ''}">${escapeHtml(name)}${streakHtml}</td>`;
       for (let d = 1; d <= days; d++) {
         const key = `${name}_${d}`;
         const rec = recordMap[key];
