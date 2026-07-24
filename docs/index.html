@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<!-- v6.2 - 2026-07-24 专家自检修复：移除500KB硬拦截+AI超时+并发校验+XSS防御+数据预警 -->
+<!-- v6.3 - 2026-07-24 移除孤儿记录 + 新增姓名校验防线（非名单成员拒绝打卡） -->
 <html lang="zh-CN">
 <head>
 <meta charset="UTF-8">
@@ -401,7 +401,7 @@
   </section>
 
   <div class="toast-container" id="toastContainer"></div>
-  <div class="footer">📖 读书打卡 <span style="color:#cbd5e1">·</span> v6.2 <span style="color:#cbd5e1">·</span> 专家自检稳定版 · 记录不丢失</div>
+  <div class="footer">📖 读书打卡 <span style="color:#cbd5e1">·</span> v6.3 <span style="color:#cbd5e1">·</span> 专家自检稳定版 · 记录不丢失</div>
   <div id="debugInfo"></div>
 </div>
 
@@ -434,6 +434,8 @@ const groups = [
   { name: "第4组", members: ["Ezekiel", "Nora", "Jasper"] },
   { name: "第5组", members: ["Tyler", "Ethan", "Richard", "Nox"] }
 ];
+// 全部成员名单（用于打卡姓名校验，防止输错名字产生孤儿记录）
+const ALL_MEMBERS = groups.flatMap(g => g.members);
 
 const LEADERS = new Set(["Evenc", "Brendan", "Max", "Ezekiel", "Ethan"]);
 
@@ -939,6 +941,10 @@ async function apiUpdateFeedback(name, day, feedback) {
 }
 
 async function apiCheckin(name, day, text, image) {
+  // 最终防线：非名单成员名拒绝写入，避免任何路径产生孤儿记录
+  if (!ALL_MEMBERS.includes(name)) {
+    throw new Error('姓名「' + name + '」不在成员名单中，已拒绝保存');
+  }
   const records = await apiGetRecordsFresh();
   const key = name + '_' + day;
   const idx = records.findIndex(r => r.key === key);
@@ -1359,6 +1365,12 @@ async function submitCheckin() {
   const targetDay = modalTarget.day;
   const imageData = pendingImage; // 保存图片引用，避免被 closeModal 后清空
 
+  // 姓名校验：不在成员名单里直接拦截，防止产生孤儿记录
+  if (!ALL_MEMBERS.includes(targetName)) {
+    alert('姓名「' + targetName + '」不在成员名单中，无法打卡。\n请确认设置中的名字是否与分组名单一致；如需新增成员，请联系管理员。');
+    return;
+  }
+
   closeModal();
   pendingImage = null;
 
@@ -1494,7 +1506,7 @@ function showStreakPopup(name, streak) {
 }
 
 // ===== Table rendering =====
-const PAGE_VERSION = 'v6.2';
+const PAGE_VERSION = 'v6.3';
 
 // v6.2 数据接近上限预警：仅管理员可见，提示归档/重置，避免某天数据撞 1MB 导致全员打卡失败
 function checkDataSizeWarning() {
